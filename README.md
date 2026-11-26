@@ -162,6 +162,11 @@ muster auth create muster-tui --scope admin
 muster-tui --set-token <token>
 ```
 
+muster-tui runs the CLI's token-checked commands one at a time: muster
+0.5.x can corrupt `~/.muster/tokens/auth.json` when several `--json`
+commands start at once (see [ENGINE-GAPS #0](docs/ENGINE-GAPS.md)). If it
+finds that file empty, it restores the empty structure and pairs again.
+
 ## Environment
 
 | Variable | Effect |

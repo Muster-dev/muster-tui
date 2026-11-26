@@ -88,18 +88,18 @@ type deployScreen struct {
 	dry      bool
 	force    bool
 	explicit bool // services were named (vs "everything")
-	phase   deployPhase
-	runs    []*svcRun
-	cur     int
-	taskID  int
-	choice  int
-	sel     int
-	scroll  int
-	started time.Time
-	ended   time.Time
-	plan    []engine.DeployEvent
-	summary *engine.DeployEvent
-	fatal   string
+	phase    deployPhase
+	runs     []*svcRun
+	cur      int
+	taskID   int
+	choice   int
+	sel      int
+	scroll   int
+	started  time.Time
+	ended    time.Time
+	plan     []engine.DeployEvent
+	summary  *engine.DeployEvent
+	fatal    string
 }
 
 func newDeploy(env *Env, services []string, dry, force, explicit bool) *deployScreen {
@@ -463,7 +463,13 @@ func (d *deployScreen) onTaskEnd(canceled bool) tea.Cmd {
 	case r.exitCode != 0 || r.health == "unhealthy" || (!r.sawDone && r.reason != "") || d.hookFailed(r):
 		r.state = rsFailed
 		d.phase, d.choice = phFailed, 0
-		return tea.Batch(func() tea.Msg { return focusMsg{focusMain} }, refresh("history"))
+		cmds := []tea.Cmd{refresh("history")}
+		if d.env.Active == d.Key() {
+			cmds = append(cmds, func() tea.Msg { return focusMsg{focusMain} })
+		} else {
+			cmds = append(cmds, toast(lvlErr, r.key+" failed to deploy — retry, rollback "+r.key+", skip or abort"))
+		}
+		return tea.Batch(cmds...)
 	default:
 		r.state = rsOK
 		r.collapsed = true
@@ -494,7 +500,11 @@ func (d *deployScreen) advance() tea.Cmd {
 		return d.startRun()
 	}
 	d.phase, d.ended = phDone, d.env.Now()
-	return tea.Batch(refresh("status"), refresh("history"), refresh("docker"))
+	cmds := []tea.Cmd{refresh("status"), refresh("history"), refresh("docker")}
+	if d.env.Active != d.Key() {
+		cmds = append(cmds, toast(lvlOK, "Deploy finished — "+plural(len(d.runs), "service")))
+	}
+	return tea.Batch(cmds...)
 }
 
 // recover applies a recovery choice (also reachable from the prompt).

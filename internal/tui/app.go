@@ -10,6 +10,7 @@ import (
 
 	"github.com/Muster-dev/muster-tui/internal/auth"
 	"github.com/Muster-dev/muster-tui/internal/config"
+	"github.com/Muster-dev/muster-tui/internal/engine"
 	"github.com/Muster-dev/muster-tui/internal/prompt"
 	"github.com/Muster-dev/muster-tui/internal/theme"
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,8 +28,10 @@ type Model struct {
 	overlay overlay
 	w, h    int
 
-	quitArmed bool
-	ticking   bool
+	quitArmed   bool
+	ticking     bool
+	repaired    *bool // re-pair attempted after an auth failure
+	doctorAsked *bool // background doctor run started
 }
 
 type (
@@ -50,9 +53,11 @@ func New(d Deps) Model {
 		env.State.Branch = d.Branch
 	}
 	m := Model{
-		env:     env,
-		screens: map[string]Screen{},
-		prompt:  newPromptBox(prompt.LoadHistory(d.HistoryPath)),
+		repaired:    new(bool),
+		doctorAsked: new(bool),
+		env:         env,
+		screens:     map[string]Screen{},
+		prompt:      newPromptBox(prompt.LoadHistory(d.HistoryPath)),
 	}
 	var first Screen = newDashboard(env)
 	m.screens[first.Key()] = first
@@ -74,20 +79,29 @@ func (m Model) Init() tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 	if m.env.TokenMissing && m.env.CanBootstrap && m.env.Engine != nil {
-		eng := m.env.Engine
-		_, cmd := m.env.Tasks.Run("pairing with the muster CLI", "", false, func(ctx context.Context) tea.Msg {
-			tok, err := eng.CreateToken(ctx, "muster-tui")
-			if err == nil {
-				err = auth.SaveToken(tok)
-			}
-			return tokenMsg{tok, err}
-		})
-		cmds = append(cmds, cmd)
+		cmds = append(cmds, m.env.pair())
 	} else {
-		cmds = append(cmds, m.env.loadStatus(), m.env.loadHistory(), m.env.loadDoctor(false))
+		// Doctor is slow; it starts once history has loaded (see dispatch) so
+		// the dashboard fills in first.
+		cmds = append(cmds, m.env.loadStatus(), m.env.loadHistory())
 	}
 	cmds = append(cmds, m.env.loadDocker(), m.env.loadFleet(), tickRefresh())
 	return tea.Batch(cmds...)
+}
+
+// pair creates a token with `muster auth create` — allowed without auth only
+// while the machine has no tokens (first run, or a wiped token store).
+func (e *Env) pair() tea.Cmd {
+	eng := e.Engine
+	_, cmd := e.Tasks.Run("pairing with the muster CLI", "", false, func(ctx context.Context) tea.Msg {
+		repaired, _ := auth.RepairEmptyStore()
+		tok, err := eng.CreateToken(ctx, "muster-tui")
+		if err == nil {
+			err = auth.SaveToken(tok)
+		}
+		return tokenMsg{token: tok, err: err, repaired: repaired}
+	})
+	return cmd
 }
 
 func tickRefresh() tea.Cmd {
@@ -103,7 +117,9 @@ func (m Model) Shutdown() { m.env.Tasks.CancelAll() }
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.env.Active = m.active
 	cmd := m.update(msg)
+	m.env.Active = m.active
 	if !m.ticking && m.env.Tasks.Len() > 0 && !theme.Static {
 		m.ticking = true
 		cmd = tea.Batch(cmd, tickSpin())
@@ -175,8 +191,11 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 		}
 		m.env.Engine.Token = msg.token
 		m.env.TokenMissing = false
-		return tea.Batch(m.env.loadStatus(), m.env.loadHistory(), m.env.loadDoctor(false), m.env.loadFleet(),
-			m.setToast(lvlOK, "Paired with the muster CLI"))
+		note := m.setToast(lvlOK, "Paired with the muster CLI")
+		if msg.repaired {
+			note = m.setToast(lvlWarn, "muster's token store was empty (~/.muster/tokens/auth.json) — paired again; recreate any other API tokens")
+		}
+		return tea.Batch(m.env.loadStatus(), m.env.loadHistory(), m.env.loadFleet(), note)
 
 	case navMsg:
 		return m.open(msg.screen)
@@ -236,6 +255,16 @@ func (m *Model) dispatch(tm TaskMsg, now time.Time) tea.Cmd {
 		if sm, ok := tm.Msg.(statusMsg); ok && sm.err == nil && m.env.State.Project != nil {
 			m.env.State.HookChanges = m.env.State.Project.HookChanges()
 		}
+		if _, ok := tm.Msg.(historyMsg); ok && m.env.State.Doctor == nil && !*m.doctorAsked && !m.env.NoAutoLoad {
+			*m.doctorAsked = true
+			cmds = append(cmds, m.env.loadDoctor(false))
+		}
+		// Self-heal: the CLI rejected our token and has no tokens at all
+		// (first run, or its token store was wiped) — pair again once.
+		if sm, ok := tm.Msg.(statusMsg); ok && engine.IsAuth(sm.err) && !*m.repaired && m.env.Engine != nil && !auth.MachineHasTokens() && !m.env.NoAutoLoad {
+			*m.repaired = true
+			cmds = append(cmds, m.env.pair())
+		}
 	}
 	switch inner := tm.Msg.(type) {
 	case navMsg, runLineMsg, toastMsg, refreshMsg, reloadConfigMsg, execMsg, confirmMsg, backMsg, focusMsg, prefillMsg:
@@ -273,6 +302,7 @@ func (m *Model) open(s Screen) tea.Cmd {
 	}
 	m.screens[key] = s
 	m.active = key
+	m.env.Active = key
 	m.overlay = nil
 	if key == "dashboard" || key == "deploy" {
 		m.focus = focusPrompt

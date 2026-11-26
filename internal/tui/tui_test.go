@@ -295,3 +295,22 @@ func TestNoProjectStartsOnboardingAndDockerWorks(t *testing.T) {
 		t.Fatalf("deploy without a project should point at setup: %q", m.env.State.Toast)
 	}
 }
+
+func TestEscDoesNotCancelBackgroundDeploy(t *testing.T) {
+	m := New(baseDeps(t))
+	m = feed(m, tea.WindowSizeMsg{Width: 100, Height: 30}, runLineMsg{"deploy api"})
+	d := m.screens["deploy"].(*deployScreen)
+	task := m.env.Tasks.Get(d.taskID)
+	if task == nil {
+		t.Fatal("deploy task should be registered")
+	}
+	m = feed(m, runLineMsg{"dashboard"}, tea.KeyMsg{Type: tea.KeyEsc})
+	if task.Canceled() {
+		t.Fatal("Esc on the dashboard cancelled a background deploy")
+	}
+	m = feed(m, runLineMsg{"abort"})
+	if !task.Canceled() {
+		t.Fatal("`abort` should cancel the deploy")
+	}
+	m.Shutdown()
+}

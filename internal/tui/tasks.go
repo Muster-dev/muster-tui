@@ -150,6 +150,22 @@ func (t *Tasks) Foreground() *Task {
 	return nil
 }
 
+// ForegroundOf returns the newest live foreground task owned by one of owners.
+func (t *Tasks) ForegroundOf(owners ...string) *Task {
+	for i := len(t.order) - 1; i >= 0; i-- {
+		task, ok := t.tasks[t.order[i]]
+		if !ok || !task.FG || task.Canceled() {
+			continue
+		}
+		for _, o := range owners {
+			if task.Owner == o {
+				return task
+			}
+		}
+	}
+	return nil
+}
+
 // List returns running tasks oldest first.
 func (t *Tasks) List() []*Task {
 	var out []*Task

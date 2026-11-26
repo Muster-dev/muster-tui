@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -188,14 +189,24 @@ func (e *Engine) Deploy(ctx context.Context, services []string, opt DeployOption
 		args = append(args, "--force")
 	}
 	args = append(args, services...)
+	authGate.Lock()
 	ls, err := e.Raw(ctx, args...)
 	if err != nil {
+		authGate.Unlock()
 		return nil, err
 	}
+	var once sync.Once
+	release := func() { once.Do(authGate.Unlock) }
+	timer := time.AfterFunc(gateHold, release)
 	ch := make(chan DeployEvent, 64)
 	go func() {
 		defer close(ch)
+		defer release()
 		for l := range ls.C {
+			if !l.Stderr {
+				timer.Stop()
+				release()
+			}
 			ch <- ParseDeployLine(l.Text, l.Stderr)
 		}
 	}()

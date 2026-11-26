@@ -48,3 +48,23 @@ func TestMachineHasTokens(t *testing.T) {
 		t.Fatal("expected tokens")
 	}
 }
+
+func TestRepairEmptyStore(t *testing.T) {
+	h := t.TempDir()
+	t.Setenv("HOME", h)
+	if ok, _ := RepairEmptyStore(); ok {
+		t.Fatal("missing file must not be created")
+	}
+	_ = os.MkdirAll(filepath.Join(h, ".muster", "tokens"), 0o700)
+	_ = os.WriteFile(TokenStorePath(), []byte(`{"tokens":[{"name":"keep"}]}`), 0o600)
+	if ok, _ := RepairEmptyStore(); ok {
+		t.Fatal("non-empty store must be left alone")
+	}
+	_ = os.WriteFile(TokenStorePath(), nil, 0o600)
+	if ok, err := RepairEmptyStore(); !ok || err != nil {
+		t.Fatalf("empty store should be repaired: %v", err)
+	}
+	if data, _ := os.ReadFile(TokenStorePath()); string(data) != "{\"tokens\":[]}\n" {
+		t.Fatalf("got %q", data)
+	}
+}

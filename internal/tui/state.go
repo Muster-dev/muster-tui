@@ -48,6 +48,7 @@ type Env struct {
 	// Current main pane size (updated on resize / layout change).
 	MainW, MainH int
 	Fullscreen   bool
+	Active       string // key of the screen in the main pane
 }
 
 // Spin returns the current spinner frame.
@@ -204,8 +205,9 @@ type (
 		fix bool
 	}
 	tokenMsg struct {
-		token string
-		err   error
+		token    string
+		err      error
+		repaired bool // the CLI's empty token store was restored first
 	}
 )
 

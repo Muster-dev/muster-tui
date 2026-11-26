@@ -13,6 +13,41 @@ makes a screen noticeably better · **P3** nice to have.
 
 ---
 
+## 0. Concurrent `--json` calls wipe the token store — P0 (bug)
+
+`auth_validate_token` (lib/core/auth.sh) updates `last_used` on every
+`--json` call with
+
+```bash
+local tmp="${MUSTER_TOKENS_FILE}.tmp"
+jq … "$MUSTER_TOKENS_FILE" > "$tmp" && mv "$tmp" "$MUSTER_TOKENS_FILE"
+```
+
+All callers share one `.tmp` name and nothing locks, so concurrent calls
+interleave and leave `~/.muster/tokens/auth.json` **empty — every API token
+is gone**. Reproduce:
+
+```bash
+for i in 1 2 3 4 5 6; do MUSTER_TOKEN=$TOK muster history --json >/dev/null & done; wait
+wc -c ~/.muster/tokens/auth.json     # 0
+```
+
+(6 of 6 rounds wiped it in testing.) Any frontend, script or CI job that
+runs two `--json` commands at once hits this. After that, `muster auth
+create` can't bootstrap either: `_auth_ensure_file` only initialises a
+*missing* file and `jq` on an empty file writes nothing.
+
+*Today:* the engine serialises the start of every token-checked call
+(one at a time until the first output line), and if the CLI rejects the
+token while the store is empty, muster-tui restores it to `{"tokens":[]}`
+(only when it is 0 bytes) and pairs again, telling the user other tokens
+must be recreated.
+
+*Fix wanted:* write via `mktemp` in the same directory + `mv`, take a lock
+(`mkdir`/`flock`), validate the JSON before replacing, treat an empty file
+as `{"tokens":[]}` in `_auth_ensure_file`, or drop the `last_used` write
+from the read path.
+
 ## 1. `deploy` takes only one service — P1
 
 `muster deploy [flags] [service]` reads `$1` only, so

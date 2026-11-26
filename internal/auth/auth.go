@@ -12,6 +12,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // TUIConfig is the token file format.
@@ -89,4 +90,21 @@ func MachineHasTokens() bool {
 		}
 	}
 	return false
+}
+
+// TokenStorePath is the CLI's API token store.
+func TokenStorePath() string { return filepath.Join(home(), ".muster", "tokens", "auth.json") }
+
+// RepairEmptyStore restores a token store that exists but is empty (0 bytes
+// or whitespace) to `{"tokens":[]}`. An empty file holds no tokens, but the
+// CLI can't bootstrap from it (it only initialises a missing file); concurrent
+// --json calls in muster ≤ 0.5.61 can leave it empty. Anything else is left
+// alone. Reports whether it repaired the file.
+func RepairEmptyStore() (bool, error) {
+	p := TokenStorePath()
+	data, err := os.ReadFile(p)
+	if err != nil || len(strings.TrimSpace(string(data))) > 0 {
+		return false, nil
+	}
+	return true, os.WriteFile(p, []byte("{\"tokens\":[]}\n"), 0o600)
 }

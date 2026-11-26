@@ -96,7 +96,10 @@ func (m Model) headerView() string {
 	if n := m.env.Tasks.Len(); n > 0 {
 		label := ""
 		if t := m.env.Tasks.List(); len(t) > 0 {
-			label = t[len(t)-1].Label
+			label = t[0].Label
+			if n > 1 {
+				label += fmt.Sprintf(" +%d", n-1)
+			}
 		}
 		right = append(right, theme.AccentFg.Render(m.env.Spin())+" "+theme.Dim.Render(trunc(label, 22)))
 	}

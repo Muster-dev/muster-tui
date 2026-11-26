@@ -215,3 +215,28 @@ func TestLogsAndRollbackStreams(t *testing.T) {
 		t.Fatalf("%q", lines)
 	}
 }
+
+// The CLI corrupts its token store when several --json calls start at once;
+// the engine must never run two token-checked calls concurrently.
+func TestJSONCallsAreSerialized(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "muster")
+	lock := filepath.Join(dir, "lock")
+	script := "#!/bin/sh\nif ! mkdir " + lock + " 2>/dev/null; then echo '{\"error\":\"overlap\",\"message\":\"concurrent\"}' >&2; exit 1; fi\nsleep 0.05\nrmdir " + lock + "\necho '{\"project\":\"p\",\"services\":{}}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := New(bin, "tok", dir)
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		go func() {
+			_, err := e.Status(context.Background())
+			errs <- err
+		}()
+	}
+	for i := 0; i < 8; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("calls overlapped: %v", err)
+		}
+	}
+}

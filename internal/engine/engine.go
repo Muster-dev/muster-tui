@@ -12,9 +12,21 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Muster-dev/muster-tui/internal/proc"
 )
+
+// authGate serializes the start of every token-checked CLI call. The CLI
+// rewrites ~/.muster/tokens/auth.json (last_used) through a shared .tmp file
+// on each --json call; concurrent calls can truncate it to 0 bytes and wipe
+// every token (docs/ENGINE-GAPS.md #0). One at a time is safe.
+var authGate sync.Mutex
+
+// gateHold is how long a streaming call keeps the gate if it prints nothing
+// (the CLI's auth check happens before its first output line).
+var gateHold = 5 * time.Second
 
 // Engine runs the muster CLI for one project directory.
 type Engine struct {
@@ -124,7 +136,9 @@ func classify(err error) error {
 // non-zero exit with decodable stdout is not an error (doctor exits non-zero
 // when checks fail).
 func (e *Engine) runJSON(ctx context.Context, v any, tolerant bool, args ...string) error {
+	authGate.Lock()
 	out, err := proc.Output(e.Command(ctx, args...))
+	authGate.Unlock()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -171,7 +185,9 @@ var tokenRe = regexp.MustCompile(`(?m)Token:\s+([A-Za-z0-9_\-]{16,})`)
 func (e *Engine) CreateToken(ctx context.Context, name string) (string, error) {
 	c := *e
 	c.Token = ""
+	authGate.Lock()
 	out, err := proc.Output(c.Command(ctx, "auth", "create", name, "--scope", "admin"))
+	authGate.Unlock()
 	if err != nil {
 		return "", classify(err)
 	}

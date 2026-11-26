@@ -158,7 +158,9 @@ func (m *Model) escFallback(k tea.KeyMsg) tea.Cmd {
 		m.screens[m.active] = s
 		return cmd
 	}
-	if t := m.env.Tasks.Foreground(); t != nil {
+	// Esc only cancels what you're looking at; a deploy running in the
+	// background keeps going (Ctrl+C or `abort` stops it).
+	if t := m.env.Tasks.ForegroundOf(m.active, ""); t != nil {
 		m.env.Tasks.Cancel(t.ID)
 		return m.setToast(lvlWarn, "Cancelled: "+t.Label)
 	}
