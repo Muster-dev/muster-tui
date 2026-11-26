@@ -207,9 +207,18 @@ func TestDeployAllAsksFirst(t *testing.T) {
 	if !ok || d.phase != phConfirm {
 		t.Fatal("deploying everything should ask first")
 	}
+	if m.focus != focusMain {
+		t.Fatal("the confirm step should take keys directly")
+	}
 	if v := m.View(); !strings.Contains(v, "Deploy 4 services") || !strings.Contains(v, "dry run first") {
 		t.Fatalf("confirm view:\n%s", v)
 	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	d = m.screens["deploy"].(*deployScreen)
+	if !d.dry || d.phase != phRunning || m.prompt.Value() != "" {
+		t.Fatalf("d should start a dry run (dry=%v phase=%v prompt=%q)", d.dry, d.phase, m.prompt.Value())
+	}
+	m.Shutdown()
 }
 
 func TestLogsSearchFilterAndJump(t *testing.T) {

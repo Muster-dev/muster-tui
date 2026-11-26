@@ -304,10 +304,14 @@ func (m *Model) open(s Screen) tea.Cmd {
 	m.active = key
 	m.env.Active = key
 	m.overlay = nil
-	if key == "dashboard" || key == "deploy" {
+	m.focus = focusMain
+	if key == "dashboard" {
 		m.focus = focusPrompt
-	} else {
-		m.focus = focusMain
+	}
+	// A running deploy leaves the prompt free; its confirm step and
+	// recovery menu take keys directly.
+	if d, ok := s.(*deployScreen); ok && d.phase != phConfirm {
+		m.focus = focusPrompt
 	}
 	return s.Init()
 }
