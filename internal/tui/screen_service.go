@@ -58,10 +58,10 @@ func (s *serviceScreen) View(w, h int) string {
 	var lines []string
 	add := func(x ...string) { lines = append(lines, x...) }
 
-	health := healthGlyph(ss.Health) + " " + healthWord(ss.Health)
+	health := healthGlyph(ss.Shown()) + " " + healthWord(ss.Shown())
 	if ss.Deploying {
 		health = theme.AccentFg.Render(s.env.Spin() + " deploying")
-	} else if !ss.Since.IsZero() && (ss.Health == "healthy" || ss.Health == "unhealthy") {
+	} else if !ss.Since.IsZero() && (ss.Shown() == "healthy" || ss.Shown() == "unhealthy") {
 		health += theme.Dim.Render(" since " + ago(ss.Since, now))
 	}
 	title := section(s.svc)

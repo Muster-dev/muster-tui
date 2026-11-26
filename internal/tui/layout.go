@@ -299,7 +299,7 @@ func (m Model) railService(key string, w int) string {
 	st := m.env.State
 	s := st.Project.Service(key)
 	ss := st.Svc(key)
-	glyph := healthGlyph(ss.Health)
+	glyph := healthGlyph(ss.Shown())
 	if ss.Deploying {
 		glyph = theme.AccentFg.Render(m.env.Spin())
 	}
@@ -321,7 +321,7 @@ func healthGlyph(h string) string {
 		return theme.OK.Render(theme.GlyphHealthy)
 	case "unhealthy":
 		return theme.Err.Render(theme.GlyphUnhealthy)
-	case "disabled", "no_health_check":
+	case "disabled", "no_health_check", "not_deployed":
 		return theme.Dim.Render(theme.GlyphDisabled)
 	}
 	return theme.Dim.Render("◌")
@@ -337,6 +337,8 @@ func healthWord(h string) string {
 		return theme.Dim.Render("check off")
 	case "no_health_check":
 		return theme.Dim.Render("no check")
+	case "not_deployed":
+		return theme.Dim.Render("not deployed")
 	}
 	return theme.Dim.Render("unknown")
 }

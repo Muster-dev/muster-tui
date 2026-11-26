@@ -76,6 +76,18 @@ type SvcState struct {
 	CheckedAt  time.Time
 	Deploying  bool
 	LastDeploy *engine.HistoryEvent
+	// NeverDeployed is true once history has loaded and has no deploy or
+	// rollback for this service.
+	NeverDeployed bool
+}
+
+// Shown is the health to display. A failing check on a service that has
+// never been deployed isn't "unhealthy" — there's nothing running yet.
+func (ss *SvcState) Shown() string {
+	if ss.Health == "unhealthy" && ss.NeverDeployed {
+		return "not_deployed"
+	}
+	return ss.Health
 }
 
 // State is the app-wide model shared by the rail, dashboard and screens.
@@ -162,7 +174,7 @@ func (s *State) Counts() (healthy, unhealthy, deploying, other int) {
 			deploying++
 		case st.Health == "healthy":
 			healthy++
-		case st.Health == "unhealthy":
+		case st.Shown() == "unhealthy":
 			unhealthy++
 		default:
 			other++
@@ -249,12 +261,14 @@ func (s *State) apply(msg tea.Msg, now time.Time) bool {
 		}
 		for _, st := range s.Services {
 			st.LastDeploy = nil
+			st.NeverDeployed = true
 		}
 		for i := range s.History {
 			ev := s.History[i]
 			if ev.Action == "deploy" || ev.Action == "rollback" {
 				if st, ok := s.Services[ev.Service]; ok {
 					st.LastDeploy = &s.History[i]
+					st.NeverDeployed = false
 				}
 			}
 		}

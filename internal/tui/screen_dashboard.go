@@ -79,15 +79,15 @@ func (d *dashboard) View(w, h int) string {
 	}
 	nameW = min(nameW, 16)
 	showVersion := w >= 70
-	header := "  " + fit("SERVICE", nameW) + "  " + fit("HEALTH", 10) + "  " + fit("LAST DEPLOY", 20)
+	header := "  " + fit("SERVICE", nameW) + "  " + fit("HEALTH", 12) + "  " + fit("LAST DEPLOY", 20)
 	if showVersion {
 		header += "  VERSION"
 	}
 	add(theme.Dim.Render(header))
 	for _, k := range keys {
 		ss := st.Svc(k)
-		glyph := healthGlyph(ss.Health)
-		health := healthWord(ss.Health)
+		glyph := healthGlyph(ss.Shown())
+		health := healthWord(ss.Shown())
 		if ss.Deploying {
 			glyph = theme.AccentFg.Render(d.env.Spin())
 			health = theme.AccentFg.Render("deploying")
@@ -111,7 +111,7 @@ func (d *dashboard) View(w, h int) string {
 				version = v
 			}
 		}
-		row := glyph + " " + fit(k, nameW) + "  " + fit(health, 10) + "  " + fit(last, 20)
+		row := glyph + " " + fit(k, nameW) + "  " + fit(health, 12) + "  " + fit(last, 20)
 		if showVersion {
 			row += "  " + version
 		}

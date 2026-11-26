@@ -2,11 +2,11 @@
 ────────────────────────────────────────────────────────────────────────────────
  Services                │ acme-store                           checked just now
  ● redis      tcp :6379  │
- ● api        http :8080 │   SERVICE  HEALTH      LAST DEPLOY
- ✕ web        http :3000 │ ● redis    healthy     deployed 21h ago
- ○ worker     no check   │ ● api      healthy     deployed 20m ago
-                         │ ✕ web      unhealthy   failed 47m ago
- Servers                 │ ○ worker   check off   never deployed
+ ● api        http :8080 │   SERVICE  HEALTH        LAST DEPLOY
+ ✕ web        http :3000 │ ● redis    healthy       deployed 21h ago
+ ○ worker     no check   │ ● api      healthy       deployed 20m ago
+                         │ ✕ web      unhealthy     failed 47m ago
+ Servers                 │ ○ worker   check off     never deployed
  none · servers          │
                          │ Recent activity
  Docker                  │ 13:40   api        deploy    ✓ ok        4f2a9c1

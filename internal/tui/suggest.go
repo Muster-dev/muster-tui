@@ -68,7 +68,7 @@ func (m Model) stateHint() string {
 	}
 	var unhealthy []string
 	for _, k := range st.ServiceKeys() {
-		if st.Svc(k).Health == "unhealthy" {
+		if st.Svc(k).Shown() == "unhealthy" {
 			unhealthy = append(unhealthy, k)
 		}
 	}
