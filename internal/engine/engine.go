@@ -1,277 +1,193 @@
+// Package engine wraps the muster bash CLI. muster-tui never deploys anything
+// itself: it runs `muster <cmd> --json` (or raw commands where no JSON exists)
+// and turns the output into typed values and event streams.
 package engine
 
 import (
-	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"regexp"
 	"strings"
+
+	"github.com/Muster-dev/muster-tui/internal/proc"
 )
 
+// Engine runs the muster CLI for one project directory.
 type Engine struct {
-	BinaryPath string
-	Token      string
+	Bin   string   // path to the muster executable
+	Token string   // MUSTER_TOKEN for --json commands
+	Dir   string   // working directory (project root); "" = current
+	Env   []string // extra KEY=VALUE pairs
 }
 
-// NewEngine finds muster on PATH and validates it with --version.
-func NewEngine(token string) (*Engine, error) {
-	path, err := exec.LookPath("muster")
+// Locate finds the muster executable: $MUSTER_BIN, then PATH.
+func Locate() (string, error) {
+	if p := os.Getenv("MUSTER_BIN"); p != "" {
+		return p, nil
+	}
+	p, err := exec.LookPath("muster")
 	if err != nil {
-		return nil, fmt.Errorf("muster not found on PATH: %w", err)
+		return "", errors.New("the muster CLI is not on your PATH — install it from https://getmuster.dev")
 	}
-
-	cmd := exec.Command(path, "--version")
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("muster --version failed: %w", err)
-	}
-
-	return &Engine{BinaryPath: path, Token: token}, nil
+	return p, nil
 }
 
-func (e *Engine) run(args ...string) *exec.Cmd {
-	cmd := exec.Command(e.BinaryPath, args...)
-	cmd.Env = append(cmd.Environ(), "MUSTER_TOKEN="+e.Token)
+// New returns an engine for bin.
+func New(bin, token, dir string) *Engine { return &Engine{Bin: bin, Token: token, Dir: dir} }
+
+// WithDir returns a copy of the engine that runs in dir.
+func (e *Engine) WithDir(dir string) *Engine {
+	c := *e
+	c.Dir = dir
+	return &c
+}
+
+// Command builds a cancellable muster command (not attached to the terminal).
+func (e *Engine) Command(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := proc.Command(ctx, e.Bin, args...)
+	cmd.Dir = e.Dir
+	cmd.Env = append(os.Environ(), e.env()...)
 	return cmd
 }
 
-// runInDir runs a muster command with the working directory set to dir.
-func (e *Engine) runInDir(dir string, args ...string) *exec.Cmd {
-	cmd := e.run(args...)
-	cmd.Dir = dir
+// Interactive builds a muster command for tea.ExecProcess (inherits the TTY).
+func (e *Engine) Interactive(args ...string) *exec.Cmd {
+	cmd := exec.Command(e.Bin, args...)
+	cmd.Dir = e.Dir
+	cmd.Env = append(os.Environ(), e.env()...)
+	if e.Token != "" {
+		cmd.Env = append(cmd.Env, "MUSTER_TOKEN="+e.Token)
+	}
 	return cmd
 }
 
-// StatusInDir runs muster status --json in the given project directory.
-func (e *Engine) StatusInDir(dir string) (*StatusResult, error) {
-	cmd := e.runInDir(dir, "status", "--json")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("muster status failed: %w", err)
+func (e *Engine) env() []string {
+	env := []string{"NO_COLOR=1", "MUSTER_COLOR=never", "TERM=dumb", "MUSTER_TUI=1"}
+	if e.Token != "" {
+		env = append(env, "MUSTER_TOKEN="+e.Token)
 	}
-
-	var result StatusResult
-	if err := json.Unmarshal(out, &result); err != nil {
-		return nil, fmt.Errorf("parsing status output: %w", err)
-	}
-
-	return &result, nil
+	return append(env, e.Env...)
 }
 
-// DeployInDir runs muster deploy --json in the given project directory.
-func (e *Engine) DeployInDir(dir string, services []string, dryRun bool) (<-chan DeployEvent, error) {
-	args := []string{"deploy", "--json"}
-	if dryRun {
-		args = append(args, "--dry-run")
-	}
-	args = append(args, services...)
+// CLIError is a structured error the CLI printed as JSON on stderr, e.g.
+// {"error":"auth_required","message":"MUSTER_TOKEN not set"}.
+type CLIError struct {
+	Code     string `json:"error"`
+	Message  string `json:"message"`
+	ExitCode int    `json:"-"`
+}
 
-	cmd := e.runInDir(dir, args...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("creating stdout pipe: %w", err)
+func (e *CLIError) Error() string {
+	if e.Message != "" {
+		return e.Message
 	}
+	return e.Code
+}
 
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("starting deploy: %w", err)
+// IsAuth reports whether err means the CLI rejected or lacked our token.
+func IsAuth(err error) bool {
+	var ce *CLIError
+	if errors.As(err, &ce) {
+		return strings.HasPrefix(ce.Code, "auth") || ce.Code == "forbidden"
 	}
+	return false
+}
 
-	ch := make(chan DeployEvent)
-	go func() {
-		defer close(ch)
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			var ev DeployEvent
-			if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
-				continue
-			}
-			ch <- ev
+// classify turns a process error into a CLIError when stderr carries one.
+func classify(err error) error {
+	var ee *proc.ExitError
+	if !errors.As(err, &ee) {
+		return err
+	}
+	for _, line := range strings.Split(ee.Stderr, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "{") {
+			continue
 		}
-		cmd.Wait()
-	}()
-
-	return ch, nil
-}
-
-type ServiceStatus struct {
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	HealthType string `json:"health_type"`
-	Detail     string `json:"detail"`
-}
-
-type StatusResult struct {
-	Project  string                   `json:"project"`
-	Services map[string]ServiceStatus `json:"services"`
-}
-
-// Status runs muster status --json and returns parsed results.
-func (e *Engine) Status() (*StatusResult, error) {
-	cmd := e.run("status", "--json")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("muster status failed: %w", err)
-	}
-
-	var result StatusResult
-	if err := json.Unmarshal(out, &result); err != nil {
-		return nil, fmt.Errorf("parsing status output: %w", err)
-	}
-
-	return &result, nil
-}
-
-type DeployEvent struct {
-	Event    string `json:"event"`
-	Service  string `json:"service"`
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Line     string `json:"line"`
-	LogFile  string `json:"log_file"`
-	Hook     string `json:"hook"`
-	Index    int    `json:"index"`
-	Total    int    `json:"total"`
-	ExitCode int    `json:"exit_code"`
-	HookLines int   `json:"hook_lines"`
-	DryRun   bool   `json:"dry_run"`
-}
-
-// Deploy runs muster deploy --json and streams NDJSON events on the returned channel.
-func (e *Engine) Deploy(services []string, dryRun bool) (<-chan DeployEvent, error) {
-	args := []string{"deploy", "--json"}
-	if dryRun {
-		args = append(args, "--dry-run")
-	}
-	args = append(args, services...)
-
-	cmd := e.run(args...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("creating stdout pipe: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("starting deploy: %w", err)
-	}
-
-	ch := make(chan DeployEvent)
-	go func() {
-		defer close(ch)
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			var ev DeployEvent
-			if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
-				continue
-			}
-			ch <- ev
-		}
-		cmd.Wait()
-	}()
-
-	return ch, nil
-}
-
-type HistoryEvent struct {
-	Timestamp string `json:"timestamp"`
-	Service   string `json:"service"`
-	Action    string `json:"action"`
-	Status    string `json:"status"`
-	Commit    string `json:"commit"`
-}
-
-// History runs muster history --json and returns parsed events.
-func (e *Engine) History(all bool, service string) ([]HistoryEvent, error) {
-	args := []string{"history", "--json"}
-	if all {
-		args = append(args, "--all")
-	}
-	if service != "" {
-		args = append(args, service)
-	}
-
-	cmd := e.run(args...)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("muster history failed: %w", err)
-	}
-
-	var events []HistoryEvent
-	if err := json.Unmarshal(out, &events); err != nil {
-		return nil, fmt.Errorf("parsing history output: %w", err)
-	}
-
-	return events, nil
-}
-
-type DoctorCheck struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	Detail string `json:"detail"`
-}
-
-type DoctorResult struct {
-	Pass     int           `json:"pass"`
-	Warnings int           `json:"warnings"`
-	Failures int           `json:"failures"`
-	Checks   []DoctorCheck `json:"checks"`
-}
-
-// Doctor runs muster doctor --json and returns parsed results.
-func (e *Engine) Doctor(fix bool) (*DoctorResult, error) {
-	args := []string{"doctor", "--json"}
-	if fix {
-		args = append(args, "--fix")
-	}
-
-	cmd := e.run(args...)
-	out, err := cmd.Output()
-	if err != nil {
-		// Doctor may exit non-zero on failures, still try to parse
-		if len(out) == 0 {
-			return nil, fmt.Errorf("muster doctor failed: %w", err)
+		var ce CLIError
+		if json.Unmarshal([]byte(line), &ce) == nil && ce.Code != "" {
+			ce.ExitCode = ee.Code
+			return &ce
 		}
 	}
-
-	var result DoctorResult
-	if err := json.Unmarshal(out, &result); err != nil {
-		return nil, fmt.Errorf("parsing doctor output: %w", err)
+	if strings.Contains(ee.Stderr, "No muster.json") || strings.Contains(ee.Stderr, "no config") {
+		return &CLIError{Code: "no_project", Message: "No muster.json here — run setup first", ExitCode: ee.Code}
 	}
-
-	return &result, nil
+	return err
 }
 
-// RunRaw starts a muster command and streams stdout/stderr lines on a channel.
-// Used for commands without --json (rollback, logs, cleanup).
-func (e *Engine) RunRaw(args []string) (<-chan string, error) {
-	cmd := e.run(args...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("creating stdout pipe: %w", err)
+// runJSON runs muster and decodes stdout into v. When tolerant is set, a
+// non-zero exit with decodable stdout is not an error (doctor exits non-zero
+// when checks fail).
+func (e *Engine) runJSON(ctx context.Context, v any, tolerant bool, args ...string) error {
+	out, err := proc.Output(e.Command(ctx, args...))
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	cmd.Stderr = cmd.Stdout // merge stderr into stdout
-
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("starting command: %w", err)
+	if err != nil && !(tolerant && len(strings.TrimSpace(string(out))) > 0) {
+		return classify(err)
 	}
+	body := extractJSON(out)
+	if len(body) == 0 {
+		return fmt.Errorf("muster %s returned no JSON", args[0])
+	}
+	if jerr := json.Unmarshal(body, v); jerr != nil {
+		return fmt.Errorf("muster %s returned unexpected output: %w", args[0], jerr)
+	}
+	return nil
+}
 
-	ch := make(chan string)
-	go func() {
-		defer close(ch)
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			ch <- scanner.Text()
+// extractJSON skips any non-JSON preamble (warnings printed to stdout).
+func extractJSON(out []byte) []byte {
+	s := string(out)
+	for i, line := range strings.Split(s, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
+			lines := strings.Split(s, "\n")[i:]
+			return []byte(strings.Join(lines, "\n"))
 		}
-		cmd.Wait()
-	}()
-
-	return ch, nil
+	}
+	return nil
 }
 
-// Version returns the muster CLI version string.
-func (e *Engine) Version() (string, error) {
-	cmd := e.run("--version")
-	out, err := cmd.Output()
+// Version returns `muster --version`.
+func (e *Engine) Version(ctx context.Context) (string, error) {
+	out, err := proc.Output(e.Command(ctx, "--version"))
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+var tokenRe = regexp.MustCompile(`(?m)Token:\s+([A-Za-z0-9_\-]{16,})`)
+
+// CreateToken runs `muster auth create <name> --scope admin` and returns the
+// raw token. The CLI only allows this without an admin token when no tokens
+// exist yet (first-run bootstrap).
+func (e *Engine) CreateToken(ctx context.Context, name string) (string, error) {
+	c := *e
+	c.Token = ""
+	out, err := proc.Output(c.Command(ctx, "auth", "create", name, "--scope", "admin"))
+	if err != nil {
+		return "", classify(err)
+	}
+	m := tokenRe.FindSubmatch([]byte(proc.StripANSI(string(out))))
+	if m == nil {
+		return "", errors.New("could not read the token from `muster auth create`")
+	}
+	return string(m[1]), nil
+}
+
+// Raw runs a command without JSON support and streams its output lines.
+func (e *Engine) Raw(ctx context.Context, args ...string) (*proc.LineStream, error) {
+	return proc.Lines(e.Command(ctx, args...))
+}
+
+// RunJSON runs an arbitrary JSON command and decodes into v (used by fleet).
+func (e *Engine) RunJSON(ctx context.Context, v any, args ...string) error {
+	return e.runJSON(ctx, v, false, args...)
 }

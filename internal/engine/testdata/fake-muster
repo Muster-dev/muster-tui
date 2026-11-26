@@ -1,0 +1,89 @@
+#!/bin/sh
+# Fake muster CLI for tests. Replays realistic output captured from muster
+# 0.5.x. FAKE_SCENARIO selects deploy behaviour; FAKE_LOG records argv.
+[ -n "$FAKE_LOG" ] && echo "$*" >> "$FAKE_LOG"
+if [ "$1" != "--version" ] && [ "$1" != "auth" ] && [ -z "$MUSTER_TOKEN" ]; then
+  case " $* " in *" --json "*)
+    echo '{"error":"auth_required","message":"MUSTER_TOKEN not set"}' >&2; exit 1 ;;
+  esac
+fi
+case "$1" in
+--version) echo "muster 0.5.60" ;;
+status)
+  echo '{"project":"acme-store","services":{"api":{"name":"API Server","status":"healthy","health_type":"http"},"web":{"name":"Web","status":"unhealthy","health_type":"http"},"redis":{"name":"Redis","status":"disabled","health_type":"","detail":"health check disabled"},"worker":{"name":"Worker","status":"no_health_check","health_type":"","detail":"no health hook"}}}'
+  ;;
+history)
+  echo '[{"timestamp":"2026-11-26 13:39:40","service":"redis","action":"deploy","status":"failed","commit":""},{"timestamp":"2026-11-26 12:01:02","service":"api","action":"deploy","status":"ok","commit":"4f2a9c1","future_field":true}]'
+  ;;
+doctor)
+  echo '{"pass":2,"warnings":1,"failures":1,"checks":[{"name":"jq available","status":"pass","category":"Platform & Tools"},{"name":"Docker installed but daemon not running","status":"warn","category":"Platform & Tools"},{"name":"muster.json valid JSON","status":"pass","category":"Configuration"},{"name":"Hook api/deploy.sh not executable","status":"fail","category":"Configuration"}]}'
+  exit 1
+  ;;
+auth)
+  echo ""
+  echo "  Token created"
+  echo ""
+  echo "  Name:   $3"
+  echo "  Scope:  admin"
+  printf '  Token:  \033[33m%s\033[0m\n' "0123456789abcdef0123456789abcdef"
+  ;;
+logs)
+  echo "api-1  | listening on :8080"
+  echo "api-1  | ERROR something broke"
+  ;;
+rollback)
+  echo "Rolling back $2..."
+  echo "Rolled back $2"
+  ;;
+deploy)
+  shift
+  dry=false
+  for a in "$@"; do [ "$a" = "--dry-run" ] && dry=true; done
+  if $dry; then
+    echo '{"event":"dry_run","service":"api","name":"API Server","index":1,"total":2,"hook":"/p/.muster/hooks/api/deploy.sh","hook_lines":17}'
+    echo '{"event":"dry_run","service":"web","name":"Web","index":2,"total":2,"hook":"/p/.muster/hooks/web/deploy.sh","hook_lines":12}'
+    echo '{"event":"complete","total":2,"dry_run":true}'
+    exit 0
+  fi
+  svc=""
+  for a in "$@"; do case "$a" in --*) ;; *) svc="$a" ;; esac; done
+  [ -z "$svc" ] && svc=api
+  echo "{\"event\":\"start\",\"service\":\"$svc\",\"name\":\"$svc\",\"index\":1,\"total\":1,\"log_file\":\"/p/.muster/logs/$svc-deploy.log\"}"
+  case "${FAKE_SCENARIO:-success}" in
+  success)
+    echo "{\"event\":\"git_pull\",\"service\":\"$svc\",\"remote\":\"origin\",\"branch\":\"main\",\"status\":\"pulling\"}"
+    echo "{\"event\":\"git_pull\",\"service\":\"$svc\",\"status\":\"done\"}"
+    echo "{\"event\":\"log\",\"service\":\"$svc\",\"line\":\"Building $svc...\"}"
+    echo "{\"event\":\"log\",\"service\":\"$svc\",\"line\":\"#9 [build 5/6] RUN npm run build\"}"
+    echo "warning: something on stderr" >&2
+    echo "{\"event\":\"done\",\"service\":\"$svc\",\"status\":\"success\"}"
+    echo "{\"event\":\"verify_warning\",\"service\":\"$svc\",\"message\":\"deploy completed in <1s — verify it ran\"}"
+    echo "{\"event\":\"health\",\"service\":\"$svc\",\"status\":\"checking\"}"
+    echo "{\"event\":\"health\",\"service\":\"$svc\",\"status\":\"healthy\"}"
+    echo '{"event":"complete","total":1,"dry_run":false}'
+    echo '{"event":"summary","status":"success","total":1,"succeeded":1,"failed":0,"skipped":0,"duration":4.2,"new_field":{"x":1}}'
+    ;;
+  failure)
+    echo "{\"event\":\"log\",\"service\":\"$svc\",\"line\":\"Pulling redis image...\"}"
+    echo "{\"event\":\"log\",\"service\":\"$svc\",\"line\":\"failed to connect to the docker API at unix:///var/run/docker.sock\"}"
+    echo "{\"event\":\"done\",\"service\":\"$svc\",\"status\":\"failed\",\"exit_code\":125}"
+    echo '{"event":"complete","total":1,"dry_run":false}'
+    echo '{"event":"summary","status":"failed","total":1,"succeeded":0,"failed":1,"skipped":0}'
+    exit 1
+    ;;
+  timeout)
+    echo "{\"event\":\"done\",\"service\":\"$svc\",\"status\":\"timeout\",\"timeout\":120}"
+    echo '{"event":"complete","total":1,"dry_run":false}'
+    ;;
+  locked)
+    echo "{\"event\":\"skipped\",\"service\":\"$svc\",\"reason\":\"locked\"}"
+    echo '{"event":"complete","total":1,"dry_run":false}'
+    ;;
+  slow)
+    echo "{\"event\":\"log\",\"service\":\"$svc\",\"line\":\"working\"}"
+    sleep 30
+    ;;
+  esac
+  ;;
+*) echo "Unknown command: $1" >&2; exit 1 ;;
+esac
