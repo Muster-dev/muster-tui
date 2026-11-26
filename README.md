@@ -1,108 +1,188 @@
-# muster-tui (beta)
+# muster-tui
 
-> **Early-stage Go TUI for [muster](https://github.com/ImJustRicky/muster).** This is a companion frontend — the primary bash TUI (`muster`) receives features first. muster-tui will catch up over time.
+The interactive terminal UI for [muster](https://github.com/Muster-dev/muster).
+Type `muster` in a project and this is what you get: a calm full-screen app
+with your services, servers and Docker on the left, the current task in the
+middle, and a prompt at the bottom that understands what you mean.
 
-Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Gloss](https://github.com/charmbracelet/lipgloss).
+```
+ muster  acme-store  main            2 healthy · 1 unhealthy            ⠹ deploying api
+────────────────────────────────────────────────────────────────────────────────────────
+ Services                  │ Deploy · api                                          12s
+ ● redis      tcp :6379    │  ✓ redis                                              3.1s
+ ⠹ api        deploying    │  ⠹ api
+ ✕ web        http :3000   │    ✓ git pull origin/main                             0.8s
+ ○ worker     no check     │    ⠹ run deploy.sh                                    8.2s
+                           │      │ #9 [build 5/6] RUN npm run build
+ Servers                   │  · web
+ ○ prod-1     ssh muster   │
+                           │
+ Docker                    │
+ 5/7 running · 2.1GB       │
+────────────────────────────────────────────────────────────────────────────────────────
+ ⠹ api — deploy.sh · Ctrl+O full log · Esc cancel
+ › logs web                                                     Tab complete · Enter run
+```
 
-## Status
-
-muster-tui covers the core workflows but is missing some features available in the regular bash TUI:
-
-**Working:**
-- Dashboard with service health + skills display
-- Deploy all / deploy single service with live progress
-- Full-screen log viewer with colorized output
-- Status, history, doctor screens
-- Logs, rollback, cleanup via raw output viewer
-- Service picker for targeted operations
-- Interactive settings editor (TUI mode, colors, stack, retention, etc.)
-- Double Ctrl+C quit protection
-
-**Not yet implemented:**
-- Deploy failure recovery menus (retry / rollback / skip / abort)
-- Dev mode (deploy + health watch loop)
-- Credential prompts during deploy
-- Remote deployment configuration
-- Skill marketplace browsing
-- Project setup wizard
-
-For the full feature set, use the bash TUI: just run `muster`.
-
-## Prerequisites
-
-- [muster](https://github.com/ImJustRicky/muster) installed and on your PATH
-- Go 1.21+ (to build from source)
-- A muster auth token (auto-created on first launch, or see [Setup](#setup))
+The bash `muster` CLI stays the engine and the headless interface. muster-tui
+never deploys anything itself: it runs `muster <cmd> --json`, `docker` and
+`ssh` as child processes and shows what they report.
 
 ## Install
 
 ```bash
-go install github.com/ImJustRicky/muster-tui@latest
+go install github.com/Muster-dev/muster-tui@latest
 ```
 
-Or download a binary from [Releases](https://github.com/ImJustRicky/muster-tui/releases).
-
-Or build from source:
+or download a binary from
+[Releases](https://github.com/Muster-dev/muster-tui/releases) (macOS and Linux,
+amd64 and arm64), or build from source:
 
 ```bash
-git clone https://github.com/ImJustRicky/muster-tui.git
+git clone https://github.com/Muster-dev/muster-tui.git
 cd muster-tui
 go build -o muster-tui .
 ```
 
-## Setup
+Requires [muster](https://github.com/Muster-dev/muster) on your `PATH` (and
+Docker for the Docker screen). Go 1.25+ to build.
 
-When you run `muster` with muster-tui installed, it auto-creates an auth token and launches the Go TUI. No manual setup needed.
-
-To switch between TUIs, open **Settings** in either interface and change **TUI Mode** to `go` or `bash`.
-
-### Manual token setup
+## Use
 
 ```bash
-# Create a token with admin scope
-muster auth create my-tui --scope admin
-
-# Save to muster-tui
-muster-tui --set-token <your-token>
+muster            # launches muster-tui when it's installed (tui_mode = go)
+muster-tui        # or run it directly
+muster-tui -C ~/src/acme-store
 ```
 
-Or set as environment variable:
+Switch back to the classic bash menus with `muster settings --global tui_mode bash`
+(or in Settings → Global → Interactive UI).
+
+### The prompt
+
+Type commands as words; `/deploy` works too. Tab completes commands,
+services, machines and containers; anything unrecognised gets a
+"did you mean" you can accept with Tab.
+
+| Command | What it does |
+|---|---|
+| `deploy` | Deploy everything (asks first, offers a dry run) |
+| `deploy api web` | Deploy those services, in order |
+| `dry-run` / `plan` | Show the plan, change nothing |
+| `logs api` | Follow logs |
+| `rollback api` | Roll back (asks first) |
+| `restart web` | Restart the container (or redeploy) |
+| `status` | Check health now |
+| `open api` | Service detail |
+| `history [api]` | Deploy timeline |
+| `doctor [--fix]` | Diagnose and fix |
+| `docker`, `images`, `volumes`, `prune` | Docker — works outside a project |
+| `exec <container>` | Shell inside a container |
+| `servers`, `ssh prod-1` | Fleet machines |
+| `fleet deploy\|status\|test\|rollback [target]` | Fleet operations |
+| `fleet add prod-1 deploy@10.0.0.5` | Add a machine |
+| `cloud login\|logout\|status` | Fleet Cloud |
+| `setup` | Scan this folder and create muster.json |
+| `settings [api]` | Edit global and project settings |
+| `approve` | Review and approve changed hooks |
+| `edit api [hook]` | Open a hook in `$EDITOR` |
+| `cleanup` | Clean stuck processes and old logs |
+| `retry`, `skip`, `abort` | Answer a failed deploy |
+| `help`, `quit` | |
+
+Filler words are fine (`logs for api`), so are unique prefixes (`dep api`).
+
+### Keys
+
+| Key | Everywhere |
+|---|---|
+| `/` | Start a command (popup lists them) |
+| `Tab` | Complete · accept "did you mean" · move focus prompt → services → main |
+| `↑` `↓` | Prompt history (persisted in `~/.muster/tui_history`) |
+| `Ctrl+R` | Search history |
+| `Ctrl+K` | Command palette: every action with its key |
+| `?` | Help for the current screen |
+| `Esc` | Close · cancel the running task · back |
+| `Ctrl+O` | Full-screen main pane (full deploy log) |
+| `Ctrl+C` | Clear the prompt · cancel the task · twice to quit |
+
+Screen keys (also in `?`):
+
+* **Deploy failure** — `r` retry · `b` rollback · `s` skip · `a` abort, `←` `→` + Enter
+* **Logs** — `/` search, `n`/`N`, `e`/`E` jump to errors, `L` level filter, `w` wrap, `y` copy, `End` follow
+* **Docker** — `1`-`4` tabs, `l` logs, `r` restart, `s` stop/start, `x` shell, `d` remove, `p` pull, `P` prune
+* **Servers** — `t` test, `Enter` ssh, `d` deploy, `u` status, `b` rollback, `a` add
+* **Service** — `d` deploy, `p` dry run, `l` logs, `b` rollback, `r` restart, `e` edit hook, `s` settings
+* **Settings** — `[` `]` sections, Enter/Space edit, `←` `→` cycle, `J`/`K` reorder, `Ctrl+S` save, `e` `$EDITOR`
+* **History** — `s` service, `f` result, `a` action filters · **Doctor** — `f` fix what you can
+
+The mouse works for scrolling and for picking services in the left rail.
+
+### Screens
+
+* **Onboarding** — in a folder without `muster.json`: scan, review detected
+  services with health checks and deploy order, customise, create, then
+  "Deploy now? (dry run first)".
+* **Dashboard** — health per service, last deploy, recent activity, things
+  that need attention (doctor, Docker, changed hooks).
+* **Deploy** — step list with timings and streamed output; on failure the
+  diagnosis in plain words and Retry / Rollback / Skip / Abort.
+* **Hook approval** — when hooks changed since you approved them: the files
+  and a coloured diff against the approved copy; Approve runs
+  `muster hooks approve` (muster steps aside so it can ask for your password).
+* **Service detail**, **Logs**, **Docker**, **Servers**, **History**,
+  **Doctor**, **Settings** (global settings and every `muster.json` field,
+  validated before saving; unknown keys and key order are kept).
+
+## Headless and scripting
+
+Use the CLI directly — it is the stable interface:
 
 ```bash
-export MUSTER_TOKEN=<your-token>
+muster deploy --json            # NDJSON events
+muster status --json
+muster history --json --all
+muster --minimal doctor         # plain text
+MUSTER_TOKEN=… muster deploy api --json
 ```
 
-## Usage
+## Auth
+
+The CLI requires a token for every `--json` command. When `muster` launches
+the TUI it creates an admin token named `muster-tui` and saves it with
+`muster-tui --set-token`, so normally there's nothing to do. muster-tui
+looks for it in `$MUSTER_TOKEN`, `~/.muster/tui/config.json`, then the
+legacy `~/.muster-tui/config.json`. If none exists and the machine has no
+tokens yet, muster-tui creates one itself. Otherwise it still opens (Docker,
+settings and the project files work) and the suggestion bar explains how to
+pair:
 
 ```bash
-muster-tui
+muster auth create muster-tui --scope admin
+muster-tui --set-token <token>
 ```
 
-Or just run `muster` — it will launch muster-tui automatically when installed and TUI mode is set to `go`.
+## Environment
 
-### Keyboard Shortcuts
+| Variable | Effect |
+|---|---|
+| `NO_COLOR` / `MUSTER_COLOR=never` | No colour (focus is marked with ▸ and brackets) |
+| `MUSTER_THEME=light\|dark` | Skip terminal background detection |
+| `MUSTER_BIN` | Path to the muster CLI |
+| `MUSTER_DOCKER_BIN` | Path to docker |
+| `MUSTER_TOKEN` | Token for `--json` commands |
+| `VISUAL` / `EDITOR` | Editor for `edit` and Settings → `e` |
 
-| Key | Action |
-|-----|--------|
-| `j/k` or `arrows` | Navigate |
-| `enter` | Select |
-| `r` | Force refresh (dashboard, status) |
-| `ctrl+o` | Toggle log viewer (deploy) |
-| `a` | Toggle show-all (history) |
-| `esc` | Go back |
-| `q` | Quit / go back |
-| `ctrl+c` (x2) | Force quit |
+## Development
 
-## How It Works
+```bash
+go vet ./...
+go test ./...
+go test ./internal/tui -update     # refresh golden snapshots
+```
 
-muster-tui is a frontend shell — it doesn't deploy anything itself. It calls the muster CLI with `--json` flags and parses the structured output:
-
-- `muster status --json` — service health
-- `muster deploy --json` — deploy events (NDJSON stream)
-- `muster history --json` — event history
-- `muster doctor --json` — diagnostics
-
-Commands without `--json` support (logs, rollback, cleanup) stream raw output into a scrollable viewport.
+Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). What the TUI
+still needs from the CLI: [docs/ENGINE-GAPS.md](docs/ENGINE-GAPS.md).
 
 ## License
 

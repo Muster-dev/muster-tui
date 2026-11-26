@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -22,7 +21,6 @@ type approvalScreen struct {
 	phase   int // 0 review, 1 approving, 2 failed
 	out     []string
 	err     error
-	taskID  int
 }
 
 func newApproval(env *Env, then string) *approvalScreen {
@@ -36,31 +34,22 @@ func newApproval(env *Env, then string) *approvalScreen {
 func (s *approvalScreen) Key() string   { return "approval" }
 func (s *approvalScreen) Title() string { return "Approve hooks" }
 func (s *approvalScreen) Init() tea.Cmd { return nil }
-func (s *approvalScreen) Close()        { s.env.Tasks.Cancel(s.taskID) }
 
+// approvalResultMsg arrives after `muster hooks approve` returns.
+type approvalResultMsg struct{ err error }
+
+// approve suspends the TUI and runs `muster hooks approve`: the CLI asks for
+// your password (sudo) before re-signing, so it needs the terminal.
 func (s *approvalScreen) approve() tea.Cmd {
 	eng := s.env.Eng()
 	if eng == nil {
 		return toast(lvlErr, "The muster CLI is needed to approve hooks")
 	}
 	s.phase, s.out, s.err = 1, nil, nil
-	id, cmd := s.env.Tasks.Stream("approving hooks", s.Key(), true, func(ctx context.Context) (<-chan tea.Msg, error) {
-		lines, wait, err := rawLines(ctx, eng.Command(ctx, "hooks", "approve"))
-		if err != nil {
-			return nil, err
-		}
-		out := make(chan tea.Msg, 8)
-		go func() {
-			defer close(out)
-			for l := range lines {
-				out <- logBatchMsg{[]string{l}}
-			}
-			out <- logEndMsg{wait()}
-		}()
-		return out, nil
-	})
-	s.taskID = id
-	return cmd
+	cmd := eng.Interactive("hooks", "approve")
+	return func() tea.Msg {
+		return execMsg{cmd: cmd, after: func(err error) tea.Msg { return approvalResultMsg{err} }}
+	}
 }
 
 func (s *approvalScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
@@ -70,38 +59,31 @@ func (s *approvalScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 			s.changes = s.env.State.Project.HookChanges()
 			s.sel = clamp(s.sel, 0, max(len(s.changes)-1, 0))
 		}
-	case TaskMsg:
-		if m.ID != s.taskID {
+	case approvalResultMsg:
+		if s.env.State.Project == nil {
 			return s, nil
 		}
-		switch in := m.Msg.(type) {
-		case logBatchMsg:
-			s.out = append(s.out, in.lines...)
-		case logEndMsg:
-			if in.err != nil {
-				s.phase, s.err = 2, in.err
-				return s, nil
+		left := s.env.State.Project.HookChanges()
+		s.env.State.HookChanges = left
+		if len(left) > 0 {
+			s.phase, s.changes = 2, left
+			s.err = fmt.Errorf("hooks are still not approved")
+			if m.err != nil {
+				s.err = fmt.Errorf("muster hooks approve failed: %v", m.err)
 			}
-			s.env.State.HookChanges = s.env.State.Project.HookChanges()
-			cmds := []tea.Cmd{toast(lvlOK, "Hooks approved"), func() tea.Msg { return backMsg{} }}
-			if s.then != "" {
-				cmds = append(cmds, runLine(s.then))
-			}
-			return s, tea.Sequence(cmds...)
-		case taskErrMsg:
-			s.phase, s.err = 2, in.Err
+			return s, nil
 		}
+		cmds := []tea.Cmd{toast(lvlOK, "Hooks approved"), func() tea.Msg { return backMsg{} }}
+		if s.then != "" {
+			cmds = append(cmds, runLine(s.then))
+		}
+		return s, tea.Sequence(cmds...)
 	}
 	return s, nil
 }
 
 func (s *approvalScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 	if s.phase == 1 {
-		if k.String() == "esc" {
-			s.env.Tasks.Cancel(s.taskID)
-			s.phase = 0
-			return s, nil, true
-		}
 		return s, nil, false
 	}
 	switch k.String() {
@@ -221,14 +203,14 @@ func (s *approvalScreen) View(w, h int) string {
 	footer := []string{}
 	switch s.phase {
 	case 1:
-		footer = append(footer, theme.AccentFg.Render(s.env.Spin())+" Approving…")
+		footer = append(footer, theme.AccentFg.Render(s.env.Spin())+" Waiting for muster hooks approve…")
 	case 2:
 		footer = append(footer, theme.Err.Render(theme.GlyphFail+" ")+errText(s.err))
 		for _, l := range tail(s.out, 2) {
 			footer = append(footer, theme.Dim.Render("  "+trunc(l, w-2)))
 		}
 	default:
-		footer = append(footer, button("Approve", true)+" "+button("Abort", false)+"   "+theme.Dim.Render("a approve · Esc abort · e edit"))
+		footer = append(footer, button("Approve", true)+" "+button("Abort", false)+"   "+theme.Dim.Render("a approve (asks for your password) · Esc abort · e edit"))
 	}
 	diffH := h - len(lines) - len(footer) - 1
 	if s.sel < len(s.changes) && diffH > 0 {
@@ -247,7 +229,7 @@ func (s *approvalScreen) View(w, h int) string {
 
 func (s *approvalScreen) Hint() string {
 	if s.phase == 1 {
-		return theme.AccentFg.Render(s.env.Spin()) + " Approving hooks — " + keyHint("Esc", "cancel")
+		return theme.AccentFg.Render(s.env.Spin()) + " Approving hooks…"
 	}
 	if s.then != "" {
 		return theme.Warning.Render(theme.GlyphWarn+" ") + "Approve to continue with " + code(s.then) + theme.Dim.Render(" · ") + keyHint("a", "approve", "Esc", "abort")

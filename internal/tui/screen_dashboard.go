@@ -6,14 +6,26 @@ import (
 	"time"
 
 	"github.com/Muster-dev/muster-tui/internal/engine"
+	"github.com/Muster-dev/muster-tui/internal/registry"
 	"github.com/Muster-dev/muster-tui/internal/theme"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 // dashboard is the default screen: health, last deploys, activity, warnings.
-type dashboard struct{ env *Env }
+type dashboard struct {
+	env      *Env
+	projects []registry.Project // registered projects, shown when there's no project here
+}
 
-func newDashboard(env *Env) *dashboard { return &dashboard{env: env} }
+func newDashboard(env *Env) *dashboard {
+	d := &dashboard{env: env}
+	if env.Project == nil {
+		if pf, err := registry.Load(); err == nil {
+			d.projects = pf.Projects
+		}
+	}
+	return d
+}
 
 func (d *dashboard) Key() string                                    { return "dashboard" }
 func (d *dashboard) Title() string                                  { return "Overview" }
@@ -35,6 +47,17 @@ func (d *dashboard) View(w, h int) string {
 		add("", "  "+code("setup")+theme.Dim.Render("     scan this folder"))
 		add("  " + code("docker") + theme.Dim.Render("    containers, images and disk — works anywhere"))
 		add("  " + code("servers") + theme.Dim.Render("   your fleet machines"))
+		if len(d.projects) > 0 {
+			add("", section("Your projects"))
+			for i, p := range d.projects {
+				if i == 6 {
+					add(theme.Dim.Render(fmt.Sprintf("  … %d more · muster projects", len(d.projects)-6)))
+					break
+				}
+				add("  " + fit(p.Name, 18) + " " + theme.Dim.Render(p.Path))
+			}
+			add(theme.Dim.Render("  Open one with ") + code("muster-tui -C <path>"))
+		}
 		return block(lines, w, h)
 	}
 

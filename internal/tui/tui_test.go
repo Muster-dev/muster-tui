@@ -57,19 +57,36 @@ func TestResizeToTinyNeverPanics(t *testing.T) {
 		m.active = s.Key()
 		for _, sz := range sizes {
 			m = feed(m, tea.WindowSizeMsg{Width: sz[0], Height: sz[1]})
-			_ = m.View()
+			checkFrame(t, s.Key(), m.View(), sz[0], sz[1])
 			m.overlay = newHelp(m.env, s)
-			_ = m.View()
+			checkFrame(t, s.Key()+"+help", m.View(), sz[0], sz[1])
 			m.overlay = newPalette(m.env, s)
-			_ = m.View()
+			checkFrame(t, s.Key()+"+palette", m.View(), sz[0], sz[1])
 			m.overlay = nil
 			m.env.Fullscreen = !m.env.Fullscreen
-			_ = m.View()
+			checkFrame(t, s.Key()+"+fullscreen", m.View(), sz[0], sz[1])
 		}
 	}
 	m = feed(m, tea.WindowSizeMsg{Width: 40, Height: 10})
 	if !strings.Contains(m.View(), "Terminal too small") {
 		t.Fatal("expected the too-small view")
+	}
+}
+
+// checkFrame asserts a frame is exactly w×h so the terminal never scrolls.
+func checkFrame(t *testing.T, name, view string, w, h int) {
+	t.Helper()
+	if w == 0 || h == 0 {
+		return
+	}
+	lines := strings.Split(view, "\n")
+	if len(lines) != h {
+		t.Fatalf("%s at %dx%d: %d lines", name, w, h, len(lines))
+	}
+	for i, l := range lines {
+		if lw := width(l); lw > w {
+			t.Fatalf("%s at %dx%d: line %d is %d wide: %q", name, w, h, i, lw, l)
+		}
 	}
 }
 

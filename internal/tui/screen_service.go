@@ -61,7 +61,7 @@ func (s *serviceScreen) View(w, h int) string {
 	health := healthGlyph(ss.Health) + " " + healthWord(ss.Health)
 	if ss.Deploying {
 		health = theme.AccentFg.Render(s.env.Spin() + " deploying")
-	} else if !ss.Since.IsZero() && ss.Health != "unknown" {
+	} else if !ss.Since.IsZero() && (ss.Health == "healthy" || ss.Health == "unhealthy") {
 		health += theme.Dim.Render(" since " + ago(ss.Since, now))
 	}
 	title := section(s.svc)

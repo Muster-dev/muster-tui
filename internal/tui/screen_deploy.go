@@ -84,9 +84,10 @@ var recoveryChoices = []string{"Retry", "Rollback", "Skip", "Abort"}
 // can stop on a failure and offer Retry / Rollback / Skip / Abort. Dry runs
 // use a single `deploy --json --dry-run` call.
 type deployScreen struct {
-	env     *Env
-	dry     bool
-	force   bool
+	env      *Env
+	dry      bool
+	force    bool
+	explicit bool // services were named (vs "everything")
 	phase   deployPhase
 	runs    []*svcRun
 	cur     int
@@ -102,7 +103,7 @@ type deployScreen struct {
 }
 
 func newDeploy(env *Env, services []string, dry, force, explicit bool) *deployScreen {
-	d := &deployScreen{env: env, dry: dry, force: force, sel: -1}
+	d := &deployScreen{env: env, dry: dry, force: force, sel: -1, explicit: explicit}
 	keys := services
 	if len(keys) == 0 && env.State.Project != nil {
 		for _, s := range env.State.Project.Services() {
@@ -168,18 +169,37 @@ func (d *deployScreen) begin() tea.Cmd {
 	return d.startRun()
 }
 
+// startDry asks the CLI for the plan. `muster deploy` takes a single
+// service, so "everything" is one call (the CLI orders it) and a named
+// subset is one call per service.
 func (d *deployScreen) startDry() tea.Cmd {
 	eng := d.env.Eng()
-	var keys []string
-	for _, r := range d.runs {
-		keys = append(keys, r.key)
+	calls := [][]string{nil}
+	if d.explicit {
+		calls = nil
+		for _, r := range d.runs {
+			calls = append(calls, []string{r.key})
+		}
 	}
 	id, cmd := d.env.Tasks.Stream("dry run", d.Key(), true, func(ctx context.Context) (<-chan tea.Msg, error) {
-		s, err := eng.Deploy(ctx, keys, engine.DeployOptions{DryRun: true})
-		if err != nil {
-			return nil, err
-		}
-		return pipeDeploy(s), nil
+		out := make(chan tea.Msg, 32)
+		go func() {
+			defer close(out)
+			for _, svcs := range calls {
+				s, err := eng.Deploy(ctx, svcs, engine.DeployOptions{DryRun: true})
+				if err != nil {
+					out <- deployExitMsg{err}
+					return
+				}
+				for msg := range pipeDeploy(s) {
+					out <- msg
+				}
+				if ctx.Err() != nil {
+					return
+				}
+			}
+		}()
+		return out, nil
 	})
 	d.taskID = id
 	return cmd
@@ -271,7 +291,9 @@ func (d *deployScreen) onEvent(ev engine.DeployEvent) tea.Cmd {
 			e := ev
 			d.summary = &e
 		case "error":
-			d.fatal = firstNonEmpty(ev.Message, ev.Status)
+			d.fatal = firstNonEmpty(ev.Message, ev.Reason, ev.Status)
+		case "skipped":
+			d.plan = append(d.plan, engine.DeployEvent{Event: "skipped", Service: ev.Service, Reason: ev.Reason})
 		}
 		return nil
 	}
@@ -578,7 +600,10 @@ func (d *deployScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 				for _, r := range d.runs {
 					keys = append(keys, r.key)
 				}
-				nd := newDeploy(d.env, keys, false, d.force, true)
+				if !d.explicit {
+					keys = nil
+				}
+				nd := newDeploy(d.env, keys, false, d.force, d.explicit)
 				return d, nav(nd), true
 			}
 			return d, func() tea.Msg { return backMsg{} }, true
@@ -868,6 +893,10 @@ func (d *deployScreen) confirmView(w, h int) string {
 func (d *deployScreen) dryView(w, h int) string {
 	lines := []string{spread(section("Dry run"), theme.Dim.Render("nothing will change"), w), ""}
 	for _, ev := range d.plan {
+		if ev.Event == "skipped" {
+			lines = append(lines, fmt.Sprintf(" %s %s %s", theme.Dim.Render(theme.GlyphSkip), fit(ev.Service, 14), theme.Dim.Render(skipText(ev.Reason))))
+			continue
+		}
 		hook := ev.Hook
 		if d.env.State.Project != nil {
 			hook = relPath(d.env, hook)
