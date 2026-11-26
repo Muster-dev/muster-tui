@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ImJustRicky/muster-tui/internal/auth"
-	"github.com/ImJustRicky/muster-tui/internal/config"
-	"github.com/ImJustRicky/muster-tui/internal/engine"
-	"github.com/ImJustRicky/muster-tui/internal/registry"
-	"github.com/ImJustRicky/muster-tui/internal/tui"
+	"github.com/Muster-dev/muster-tui/internal/auth"
+	"github.com/Muster-dev/muster-tui/internal/config"
+	"github.com/Muster-dev/muster-tui/internal/engine"
+	"github.com/Muster-dev/muster-tui/internal/registry"
+	"github.com/Muster-dev/muster-tui/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

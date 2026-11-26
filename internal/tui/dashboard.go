@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ImJustRicky/muster-tui/internal/config"
-	"github.com/ImJustRicky/muster-tui/internal/engine"
-	"github.com/ImJustRicky/muster-tui/internal/skills"
+	"github.com/Muster-dev/muster-tui/internal/config"
+	"github.com/Muster-dev/muster-tui/internal/engine"
+	"github.com/Muster-dev/muster-tui/internal/skills"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )

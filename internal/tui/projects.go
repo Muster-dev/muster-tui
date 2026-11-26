@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ImJustRicky/muster-tui/internal/registry"
+	"github.com/Muster-dev/muster-tui/internal/registry"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
