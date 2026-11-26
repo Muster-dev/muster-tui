@@ -46,6 +46,9 @@ func New(d Deps) Model {
 		d.Now = time.Now
 	}
 	env := &Env{Deps: d, Tasks: newTasks(d.Now), State: newState(d.Project, d.Cwd)}
+	if d.Branch != "" {
+		env.State.Branch = d.Branch
+	}
 	m := Model{
 		env:     env,
 		screens: map[string]Screen{},
@@ -359,6 +362,9 @@ func (m *Model) reloadConfig() tea.Cmd {
 		p = np
 	}
 	st.setProject(p, m.env.Cwd)
+	if m.env.Deps.Branch != "" {
+		st.Branch = m.env.Deps.Branch
+	}
 	m.env.Project = p
 	return tea.Batch(m.broadcast(reloadConfigMsg{}), m.env.loadStatus(), m.env.loadHistory())
 }

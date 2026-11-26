@@ -469,7 +469,11 @@ func (o *onboarding) reviewLines(w int) []string {
 		}
 		lines = append(lines, row)
 	}
-	lines = append(lines, "", theme.Dim.Render(fmt.Sprintf("Deploys %s in this order. Nothing is written until you create.", plural(inc, "service"))), "")
+	lines = append(lines, "")
+	for _, l := range wrap(fmt.Sprintf("Deploys %s in this order. Nothing is written until you create.", plural(inc, "service")), w) {
+		lines = append(lines, theme.Dim.Render(l))
+	}
+	lines = append(lines, "")
 	if o.phase == obCustomize {
 		col := []string{"include", "health check type", "port", "endpoint / command", "credentials"}[o.col]
 		lines = append(lines, theme.Dim.Render("Editing ")+theme.AccentFg.Render(col)+theme.Dim.Render(" · ")+keyHint("←→", "field", "Space", "change", "J/K", "move", "Esc", "done"))

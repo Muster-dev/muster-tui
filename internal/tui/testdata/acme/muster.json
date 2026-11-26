@@ -1,0 +1,28 @@
+{
+  "project": "acme-store",
+  "version": "1",
+  "services": {
+    "redis": {
+      "name": "Redis",
+      "health": {"type": "tcp", "port": 6379, "timeout": 5, "enabled": true},
+      "credentials": {"mode": "off"}
+    },
+    "api": {
+      "name": "API Server",
+      "git_pull": {"enabled": true, "remote": "origin", "branch": "main"},
+      "health": {"type": "http", "endpoint": "/health", "port": 8080, "timeout": 10, "enabled": true},
+      "credentials": {"mode": "session"}
+    },
+    "web": {
+      "name": "Web",
+      "health": {"type": "http", "endpoint": "/", "port": 3000, "timeout": 10, "enabled": true},
+      "credentials": {"mode": "off"}
+    },
+    "worker": {
+      "name": "Worker",
+      "health": {"enabled": false},
+      "credentials": {"mode": "off"}
+    }
+  },
+  "deploy_order": ["redis", "api", "web", "worker"]
+}

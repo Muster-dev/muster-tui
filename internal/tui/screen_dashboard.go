@@ -153,7 +153,7 @@ func activityLine(ev engine.HistoryEvent, now time.Time, w int) string {
 	if !ev.OK() {
 		status = theme.Err.Render(theme.GlyphFail + " " + firstNonEmpty(ev.Status, "failed"))
 	}
-	line := theme.Dim.Render(when) + "  " + fit(ev.Service, 10) + " " + fit(ev.Action, 9) + " " + status
+	line := theme.Dim.Render(fit(when, 6)) + "  " + fit(ev.Service, 10) + " " + fit(ev.Action, 9) + " " + fit(status, 10)
 	if c := shortSHA(ev.Commit); c != "" {
 		line += "  " + theme.Dim.Render(c)
 	}

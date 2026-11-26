@@ -46,12 +46,12 @@ func unifiedDiff(a, b []string, ctx int) []string {
 			ops = append(ops, op{' ', a[i], i, j})
 			i++
 			j++
-		case j < m && (i == n || lcs[i][j+1] >= lcs[i+1][j]):
-			ops = append(ops, op{'+', b[j], i, j})
-			j++
-		default:
+		case i < n && (j == m || lcs[i+1][j] >= lcs[i][j+1]):
 			ops = append(ops, op{'-', a[i], i, j})
 			i++
+		default:
+			ops = append(ops, op{'+', b[j], i, j})
+			j++
 		}
 	}
 	// Group into hunks.

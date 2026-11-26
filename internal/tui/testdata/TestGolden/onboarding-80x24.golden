@@ -1,0 +1,24 @@
+ muster  no project  main
+────────────────────────────────────────────────────────────────────────────────
+ Services                │ Set up sample-compose    compose · docker-compose.yml
+ No project here         │
+ setup to create one     │ Found 3 services. Health checks and order are a best
+                         │ guess — change anything.
+                         │
+ Servers                 │     #  SERVICE   KIND   HEALTH CHECK
+ …                       │   ✓ 1  redis     infra  tcp :6379
+                         │   ✓ 2  api       build  http :8080 /
+ Docker                  │   ✓ 3  web       image  http :3000 /
+ …                       │
+                         │ Deploys 3 services in this order. Nothing is written
+                         │ until you create.
+                         │
+                         │ [Create]  Customize   Cancel
+                         │
+                         │
+                         │
+                         │
+                         │
+────────────────────────────────────────────────────────────────────────────────
+ Enter choose · c create · e customize · Esc cancel
+ › type a command — deploy, logs api, docker, help          / commands · ? help

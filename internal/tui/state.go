@@ -32,6 +32,8 @@ type Deps struct {
 	HistoryPath  string
 	Now          func() time.Time
 	Version      string
+	// Branch overrides git branch detection (tests).
+	Branch string
 	// NoAutoLoad disables startup loads and timers (tests feed data).
 	NoAutoLoad bool
 }

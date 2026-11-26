@@ -1,0 +1,13 @@
+services:
+  api:
+    build: ./api
+    ports:
+      - "8080:8080"
+  web:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"

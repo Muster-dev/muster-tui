@@ -411,7 +411,7 @@ func (s *dockerScreen) View(w, h int) string {
 func (s *dockerScreen) actionsLine() string {
 	switch s.tab {
 	case 0:
-		return keyHint("l", "logs", "r", "restart", "s", "stop/start", "x", "shell", "d", "remove", "P", "prune")
+		return keyHint("l", "logs", "r", "restart", "s", "stop", "x", "shell", "d", "rm", "P", "prune")
 	case 1:
 		return keyHint("p", "pull", "d", "remove", "P", "prune dangling")
 	case 2:
@@ -426,7 +426,7 @@ func (s *dockerScreen) containerRows(w int) (string, []string) {
 	showImage := w >= 100
 	showPorts := w >= 72
 	showStats := w >= 58
-	hdr := " " + fit("NAME", nameW) + " " + fit("STATUS", statusW)
+	hdr := "  " + fit("NAME", nameW) + " " + fit("STATUS", statusW)
 	if showPorts {
 		hdr += " " + fit("PORTS", 14)
 	}
@@ -452,7 +452,7 @@ func (s *dockerScreen) containerRows(w int) (string, []string) {
 		} else {
 			status = strings.ToLower(status)
 		}
-		row := glyph + fit(c.Name(), nameW) + " " + theme.Dim.Render(fit(status, statusW))
+		row := glyph + " " + fit(c.Name(), nameW) + " " + theme.Dim.Render(fit(status, statusW))
 		if showPorts {
 			row += " " + fit(c.ShortPorts(), 14)
 		}

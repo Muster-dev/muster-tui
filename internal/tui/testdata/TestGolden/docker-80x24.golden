@@ -1,0 +1,24 @@
+ muster  acme-store  main          checking…
+────────────────────────────────────────────────────────────────────────────────
+ Services                │ [Containers 3] Images 3  Volumes 1  Disk
+ ◌ redis      tcp :6379  │
+ ◌ api        http :8080 │    NAME          STATUS
+ ◌ web        http :3000 │ ▸● acme-api-1    up 5 minutes (hea…
+ ◌ worker     no check   │  ● acme-redis-1  up 2 hours
+                         │  ○ acme-web-1    exited (137) 2 da…
+ Servers                 │
+ …                       │
+                         │
+ Docker                  │
+ 2/3 running · 927MB     │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │ ─────────────────────────────────────────────────────
+                         │ l logs · r restart · s stop · x shell · d rm · P pru…
+────────────────────────────────────────────────────────────────────────────────
+ ←→ 1-4 tabs · ↑↓ select · R refresh
+ › type a command — deploy, logs api, docker, help          / commands · ? help

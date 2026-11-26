@@ -249,7 +249,7 @@ func (m Model) railLines(w, h int) []string {
 	add := func(s string) { lines = append(lines, s) }
 	add(" " + section("Services"))
 	if st.Project == nil {
-		add(theme.Dim.Render(" No project in this folder"))
+		add(theme.Dim.Render(" No project here"))
 		add(" " + code("setup") + theme.Dim.Render(" to create one"))
 		add("")
 	} else {
