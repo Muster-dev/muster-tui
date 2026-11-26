@@ -115,6 +115,7 @@ func TestLoadValidateSave(t *testing.T) {
 }
 
 func TestHookChanges(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "muster.json"), `{"services":{"api":{}}}`)
 	write(t, filepath.Join(dir, ".muster/hooks/api/deploy.sh"), "echo hi\n")
@@ -124,7 +125,9 @@ func TestHookChanges(t *testing.T) {
 		t.Fatalf("no manifest: %+v", ch)
 	}
 	sum, _ := fileSHA(filepath.Join(dir, ".muster/hooks/api/deploy.sh"))
-	write(t, p.ManifestPath(), `{"api/deploy.sh":{"sha256":"`+sum+`"},"api/rollback.sh":{"sha256":"x"},"api/health.sh":{"sha256":"stale"}}`)
+	cfgSum, _ := fileSHA(filepath.Join(dir, "muster.json"))
+	// legacy in-repo manifest
+	write(t, filepath.Join(dir, ".muster", "hooks.manifest"), `{"api/deploy.sh":{"sha256":"`+sum+`"},"api/rollback.sh":{"sha256":"x"},"api/health.sh":{"sha256":"stale"},"_config/muster.json":{"sha256":"`+cfgSum+`"}}`)
 	ch := p.HookChanges()
 	got := map[string]string{}
 	for _, c := range ch {
@@ -133,6 +136,22 @@ func TestHookChanges(t *testing.T) {
 	want := map[string]string{"api/health.sh": "changed", "api/rollback.sh": "removed"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("changes = %v, want %v", got, want)
+	}
+	// The per-user trust store wins over the legacy manifest and provides
+	// approved copies for diffs.
+	write(t, filepath.Join(p.TrustDir(), "hooks.manifest"), `{"api/deploy.sh":{"sha256":"old"},"api/health.sh":{"sha256":"stale"},"_config/muster.json":{"sha256":"other"}}`)
+	write(t, filepath.Join(p.TrustDir(), "approved", "api", "deploy.sh"), "echo old\n")
+	got = map[string]string{}
+	var approvedCopy string
+	for _, c := range p.HookChanges() {
+		got[c.Key] = c.Kind
+		if c.Key == "api/deploy.sh" {
+			approvedCopy = c.Approved
+		}
+	}
+	want = map[string]string{"api/deploy.sh": "changed", "api/health.sh": "changed", "_config/muster.json": "changed"}
+	if !reflect.DeepEqual(got, want) || approvedCopy == "" {
+		t.Fatalf("trust store: %v (copy %q)", got, approvedCopy)
 	}
 }
 

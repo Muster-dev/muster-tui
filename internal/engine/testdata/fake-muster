@@ -61,19 +61,25 @@ deploy)
     echo "{\"event\":\"health\",\"service\":\"$svc\",\"status\":\"checking\"}"
     echo "{\"event\":\"health\",\"service\":\"$svc\",\"status\":\"healthy\"}"
     echo '{"event":"complete","total":1,"dry_run":false}'
-    echo '{"event":"summary","status":"success","total":1,"succeeded":1,"failed":0,"skipped":0,"duration":4.2,"new_field":{"x":1}}'
+    echo "{\"event\":\"summary\",\"total\":1,\"deployed\":1,\"failed\":0,\"skipped\":0,\"rolled_back\":0,\"duration\":4,\"exit_code\":0,\"services\":[{\"service\":\"$svc\",\"result\":\"deployed\",\"duration\":4,\"health\":\"healthy\",\"log_file\":\"/p/.muster/logs/$svc-deploy.log\"}],\"new_field\":{\"x\":1}}"
     ;;
   failure)
     echo "{\"event\":\"log\",\"service\":\"$svc\",\"line\":\"Pulling redis image...\"}"
     echo "{\"event\":\"log\",\"service\":\"$svc\",\"line\":\"failed to connect to the docker API at unix:///var/run/docker.sock\"}"
     echo "{\"event\":\"done\",\"service\":\"$svc\",\"status\":\"failed\",\"exit_code\":125}"
     echo '{"event":"complete","total":1,"dry_run":false}'
-    echo '{"event":"summary","status":"failed","total":1,"succeeded":0,"failed":1,"skipped":0}'
+    echo "{\"event\":\"summary\",\"total\":1,\"deployed\":0,\"failed\":1,\"skipped\":0,\"rolled_back\":0,\"duration\":2,\"exit_code\":1,\"services\":[{\"service\":\"$svc\",\"result\":\"failed\",\"duration\":2,\"health\":\"-\",\"log_file\":\"\"}]}"
     exit 1
     ;;
   timeout)
     echo "{\"event\":\"done\",\"service\":\"$svc\",\"status\":\"timeout\",\"timeout\":120}"
     echo '{"event":"complete","total":1,"dry_run":false}'
+    ;;
+  unapproved)
+    echo "  ! 2 hook files changed since approval: api/deploy.sh, _config/muster.json" >&2
+    echo '{"event":"error","reason":"hooks_not_approved"}'
+    echo '{"event":"summary","total":1,"deployed":0,"failed":0,"skipped":1,"rolled_back":0,"duration":0,"exit_code":1,"services":[]}'
+    exit 1
     ;;
   locked)
     echo "{\"event\":\"skipped\",\"service\":\"$svc\",\"reason\":\"locked\"}"

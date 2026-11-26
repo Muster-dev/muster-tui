@@ -7,6 +7,8 @@ package theme
 
 import (
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -76,11 +78,32 @@ func Spinner(n int) string {
 	return SpinnerFrames[n%len(SpinnerFrames)]
 }
 
-// Init configures the colour profile from the environment.
+// Init configures the colour profile and background from the environment.
+// MUSTER_THEME=light|dark or COLORFGBG skip the terminal background query
+// (which can stall on terminals that never answer it).
 func Init() {
 	if NoColor() {
 		lipgloss.SetColorProfile(termenv.Ascii)
 	}
+	if dark, ok := darkFromEnv(); ok {
+		lipgloss.SetHasDarkBackground(dark)
+	}
+}
+
+func darkFromEnv() (dark, ok bool) {
+	switch strings.ToLower(os.Getenv("MUSTER_THEME")) {
+	case "light":
+		return false, true
+	case "dark":
+		return true, true
+	}
+	if v := os.Getenv("COLORFGBG"); v != "" {
+		parts := strings.Split(v, ";")
+		if n, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+			return n < 7 || n == 8, true
+		}
+	}
+	return false, false
 }
 
 // NoColor reports whether colour output is disabled via NO_COLOR or
@@ -91,3 +114,7 @@ func NoColor() bool {
 	}
 	return os.Getenv("MUSTER_COLOR") == "never"
 }
+
+// Plain reports whether output has no colour or attributes (NO_COLOR or an
+// ASCII terminal), so widgets must mark focus with characters instead.
+func Plain() bool { return lipgloss.ColorProfile() == termenv.Ascii }

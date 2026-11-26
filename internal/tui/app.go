@@ -1,304 +1,385 @@
+// Package tui is muster-tui's Bubble Tea application: a header, a left rail
+// (services, servers, docker), a main pane showing the active screen, a
+// suggestion bar and a prompt that understands commands.
 package tui
 
 import (
+	"context"
+	"os/exec"
 	"time"
 
+	"github.com/Muster-dev/muster-tui/internal/auth"
 	"github.com/Muster-dev/muster-tui/internal/config"
-	"github.com/Muster-dev/muster-tui/internal/engine"
-	"github.com/Muster-dev/muster-tui/internal/registry"
+	"github.com/Muster-dev/muster-tui/internal/prompt"
+	"github.com/Muster-dev/muster-tui/internal/theme"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
-type screen int
+// Model is the root Bubble Tea model.
+type Model struct {
+	env     *Env
+	screens map[string]Screen
+	active  string
+	stack   []string
+	focus   focusZone
+	railSel int
+	prompt  promptBox
+	overlay overlay
+	w, h    int
 
-const (
-	screenProjectPicker screen = iota
-	screenDashboard
-	screenDeploy
-	screenLogViewer
-	screenStatus
-	screenHistory
-	screenDoctor
-	screenServicePicker
-	screenRawOutput
-	screenSettings
+	quitArmed bool
+	ticking   bool
+}
+
+type (
+	spinTickMsg    struct{}
+	refreshTickMsg struct{}
+	quitResetMsg   struct{}
+	toastClearMsg  struct{ until time.Time }
 )
 
-// ctrlCResetMsg clears the Ctrl+C warning after timeout.
-type ctrlCResetMsg struct{}
+const refreshEvery = 20 * time.Second
 
-// App is the root bubbletea model that manages screen routing.
-type App struct {
-	engine        *engine.Engine
-	config        *config.DeployConfig
-	screen        screen
-	projects      ProjectsModel
-	dashboard     DashboardModel
-	deploy        DeployModel
-	logViewer     LogViewerModel
-	status        StatusModel
-	history       HistoryModel
-	doctor        DoctorModel
-	servicePicker ServicePickerModel
-	rawOutput     RawOutputModel
-	settings      SettingsModel
-	projectDir    string
-	width         int
-	height        int
-	ctrlCPressed  bool // true after first Ctrl+C
-}
-
-// NewApp creates the root application model starting at the dashboard.
-func NewApp(eng *engine.Engine, cfg *config.DeployConfig) App {
-	return App{
-		engine:    eng,
-		config:    cfg,
-		screen:    screenDashboard,
-		dashboard: NewDashboard(eng, cfg),
+// New builds the app.
+func New(d Deps) Model {
+	if d.Now == nil {
+		d.Now = time.Now
 	}
-}
-
-// NewAppWithPicker creates the root model starting at the project picker.
-func NewAppWithPicker(eng *engine.Engine, projects []registry.Project) App {
-	return App{
-		engine:   eng,
-		screen:   screenProjectPicker,
-		projects: NewProjects(projects),
+	env := &Env{Deps: d, Tasks: newTasks(d.Now), State: newState(d.Project, d.Cwd)}
+	m := Model{
+		env:     env,
+		screens: map[string]Screen{},
+		prompt:  newPromptBox(prompt.LoadHistory(d.HistoryPath)),
 	}
+	var first Screen = newDashboard(env)
+	m.screens[first.Key()] = first
+	m.active = first.Key()
+	if d.Project == nil {
+		ob := newOnboarding(env, d.Cwd)
+		m.screens[ob.Key()] = ob
+		m.active = ob.Key()
+		m.stack = []string{"dashboard"}
+		m.focus = focusMain
+	}
+	return m
 }
 
-func (a App) Init() tea.Cmd {
-	switch a.screen {
-	case screenProjectPicker:
-		return a.projects.Init()
-	case screenDashboard:
-		return a.dashboard.Init()
+// Init starts the first loads. Nothing here blocks the first frame.
+func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{m.screens[m.active].Init()}
+	if m.env.NoAutoLoad {
+		return tea.Batch(cmds...)
+	}
+	if m.env.TokenMissing && m.env.CanBootstrap && m.env.Engine != nil {
+		eng := m.env.Engine
+		_, cmd := m.env.Tasks.Run("pairing with the muster CLI", "", false, func(ctx context.Context) tea.Msg {
+			tok, err := eng.CreateToken(ctx, "muster-tui")
+			if err == nil {
+				err = auth.SaveToken(tok)
+			}
+			return tokenMsg{tok, err}
+		})
+		cmds = append(cmds, cmd)
+	} else {
+		cmds = append(cmds, m.env.loadStatus(), m.env.loadHistory(), m.env.loadDoctor(false))
+	}
+	cmds = append(cmds, m.env.loadDocker(), m.env.loadFleet(), tickRefresh())
+	return tea.Batch(cmds...)
+}
+
+func tickRefresh() tea.Cmd {
+	return tea.Tick(refreshEvery, func(time.Time) tea.Msg { return refreshTickMsg{} })
+}
+
+func tickSpin() tea.Cmd {
+	return tea.Tick(110*time.Millisecond, func(time.Time) tea.Msg { return spinTickMsg{} })
+}
+
+// Shutdown cancels every running task (child processes are killed).
+func (m Model) Shutdown() { m.env.Tasks.CancelAll() }
+
+// Update implements tea.Model.
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cmd := m.update(msg)
+	if !m.ticking && m.env.Tasks.Len() > 0 && !theme.Static {
+		m.ticking = true
+		cmd = tea.Batch(cmd, tickSpin())
+	}
+	return m, cmd
+}
+
+func (m *Model) update(msg tea.Msg) tea.Cmd {
+	now := m.env.Now()
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.w, m.h = msg.Width, msg.Height
+		m.layout()
+		return nil
+	case tea.KeyMsg:
+		return m.handleKey(msg)
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+	case spinTickMsg:
+		m.env.Frame++
+		if m.env.Tasks.Len() > 0 {
+			return tickSpin()
+		}
+		m.ticking = false
+		return nil
+	case refreshTickMsg:
+		var cmds []tea.Cmd
+		if !m.busy("checking health") {
+			cmds = append(cmds, m.env.loadStatus())
+		}
+		if !m.busy("checking docker") {
+			cmds = append(cmds, m.env.loadDocker())
+		}
+		return tea.Batch(append(cmds, tickRefresh())...)
+	case quitResetMsg:
+		m.quitArmed = false
+		return nil
+	case toastClearMsg:
+		if m.env.State.ToastUntil.Equal(msg.until) {
+			m.env.State.Toast = ""
+		}
+		return nil
+
+	case taskDoneMsg:
+		ended, ok := m.env.Tasks.finish(msg.ID)
+		if !ok {
+			return nil
+		}
+		cmd := m.dispatch(TaskMsg{ID: msg.ID, Msg: msg.Msg}, now)
+		return tea.Batch(cmd, m.broadcast(ended))
+	case streamOpenMsg:
+		if msg.err != nil {
+			ended, _ := m.env.Tasks.finish(msg.ID)
+			return tea.Batch(m.dispatch(TaskMsg{ID: msg.ID, Msg: taskErrMsg{msg.err}}, now), m.broadcast(ended))
+		}
+		return listen(msg.ID, msg.ch)
+	case streamItemMsg:
+		return tea.Batch(m.dispatch(TaskMsg{ID: msg.ID, Msg: msg.Msg}, now), listen(msg.ID, msg.ch))
+	case streamEndMsg:
+		ended, ok := m.env.Tasks.finish(msg.ID)
+		if !ok {
+			return nil
+		}
+		return m.broadcast(ended)
+
+	case tokenMsg:
+		if msg.err != nil {
+			return m.setToast(lvlWarn, "Couldn't pair with the muster CLI: "+msg.err.Error())
+		}
+		m.env.Engine.Token = msg.token
+		m.env.TokenMissing = false
+		return tea.Batch(m.env.loadStatus(), m.env.loadHistory(), m.env.loadDoctor(false), m.env.loadFleet(),
+			m.setToast(lvlOK, "Paired with the muster CLI"))
+
+	case navMsg:
+		return m.open(msg.screen)
+	case backMsg:
+		return m.back()
+	case runLineMsg:
+		return m.execute(msg.line, false)
+	case prefillMsg:
+		m.prompt.SetValue(msg.text)
+		m.prompt.refresh(m.env.State.PromptContext())
+		m.focus = focusPrompt
+		return nil
+	case toastMsg:
+		return m.setToast(msg.level, msg.text)
+	case refreshMsg:
+		return m.refresh(msg.what)
+	case reloadConfigMsg:
+		return m.reloadConfig()
+	case execMsg:
+		after := msg.after
+		return tea.ExecProcess(msg.cmd, func(err error) tea.Msg {
+			if after != nil {
+				return after(err)
+			}
+			return nil
+		})
+	case confirmMsg:
+		m.overlay = newConfirm(msg)
+		return nil
+	case fullscreenMsg:
+		m.env.Fullscreen = msg.on
+		m.layout()
+		return nil
+	case focusMsg:
+		m.focus = msg.zone
+		return nil
+	case replayKeyMsg:
+		return m.toScreen(keyFromString(msg.key))
+	}
+	m.env.State.apply(msg, now)
+	return m.broadcast(msg)
+}
+
+func (m *Model) busy(label string) bool {
+	for _, t := range m.env.Tasks.List() {
+		if t.Label == label {
+			return true
+		}
+	}
+	return false
+}
+
+// dispatch folds task results into shared state and hands them to screens.
+func (m *Model) dispatch(tm TaskMsg, now time.Time) tea.Cmd {
+	var cmds []tea.Cmd
+	if m.env.State.apply(tm.Msg, now) {
+		if sm, ok := tm.Msg.(statusMsg); ok && sm.err == nil && m.env.State.Project != nil {
+			m.env.State.HookChanges = m.env.State.Project.HookChanges()
+		}
+	}
+	switch inner := tm.Msg.(type) {
+	case navMsg, runLineMsg, toastMsg, refreshMsg, reloadConfigMsg, execMsg, confirmMsg, backMsg, focusMsg, prefillMsg:
+		cmds = append(cmds, func() tea.Msg { return inner })
+	}
+	cmds = append(cmds, m.broadcast(tm))
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) broadcast(msg tea.Msg) tea.Cmd {
+	var cmds []tea.Cmd
+	for k, s := range m.screens {
+		ns, cmd := s.Update(msg)
+		m.screens[k] = ns
+		cmds = append(cmds, cmd)
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *Model) activeScreen() Screen { return m.screens[m.active] }
+
+func (m *Model) open(s Screen) tea.Cmd {
+	key := s.Key()
+	if old, ok := m.screens[key]; ok && old != s {
+		if c, ok := old.(Closer); ok {
+			c.Close()
+		}
+	}
+	if m.active != key {
+		m.leave(m.active)
+		m.stack = append(m.stack, m.active)
+		if len(m.stack) > 20 {
+			m.stack = m.stack[len(m.stack)-20:]
+		}
+	}
+	m.screens[key] = s
+	m.active = key
+	m.overlay = nil
+	if key == "dashboard" || key == "deploy" {
+		m.focus = focusPrompt
+	} else {
+		m.focus = focusMain
+	}
+	return s.Init()
+}
+
+// leave evicts a screen unless it wants to stay alive.
+func (m *Model) leave(key string) {
+	s, ok := m.screens[key]
+	if !ok || key == "dashboard" {
+		return
+	}
+	if p, ok := s.(Persistent); ok && p.Persistent() {
+		return
+	}
+	if c, ok := s.(Closer); ok {
+		c.Close()
+	}
+	m.env.Tasks.CancelOwner(key)
+	delete(m.screens, key)
+}
+
+func (m *Model) back() tea.Cmd {
+	for len(m.stack) > 0 {
+		key := m.stack[len(m.stack)-1]
+		m.stack = m.stack[:len(m.stack)-1]
+		if s, ok := m.screens[key]; ok && key != m.active {
+			m.leave(m.active)
+			m.active = key
+			if key == "dashboard" || key == "deploy" {
+				m.focus = focusPrompt
+			}
+			_ = s
+			return nil
+		}
+	}
+	if m.active != "dashboard" {
+		m.leave(m.active)
+		m.active = "dashboard"
+		m.focus = focusPrompt
 	}
 	return nil
 }
 
-func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		a.width = msg.Width
-		a.height = msg.Height
-		return a.forwardToScreen(msg)
-
-	case ctrlCResetMsg:
-		a.ctrlCPressed = false
-		return a, nil
-
-	case tea.KeyMsg:
-		if msg.String() == "ctrl+c" {
-			if a.ctrlCPressed {
-				return a, tea.Quit
-			}
-			a.ctrlCPressed = true
-			return a, tea.Tick(5*time.Second, func(time.Time) tea.Msg {
-				return ctrlCResetMsg{}
-			})
-		}
-		// Any other key clears the Ctrl+C warning
-		if a.ctrlCPressed {
-			a.ctrlCPressed = false
-		}
-
-	// Project picker → dashboard transition
-	case ProjectSelectedMsg:
-		a.projectDir = msg.Project.Path
-		configPath := config.FindConfigIn(msg.Project.Path)
-		cfg, err := config.LoadDeploy(configPath)
-		if configPath == "" || err != nil {
-			a.screen = screenDashboard
-			a.config = nil
-			a.dashboard = NewDashboard(a.engine, nil)
-			return a, a.dashboard.Init()
-		}
-		a.config = cfg
-		a.screen = screenDashboard
-		a.dashboard = NewDashboard(a.engine, cfg)
-		return a, a.dashboard.Init()
-
-	// Deploy
-	case StartDeployMsg:
-		a.screen = screenDeploy
-		a.deploy = NewDeploy(a.engine, msg.Services, false)
-		return a, a.deploy.Init()
-
-	case StartDryRunMsg:
-		a.screen = screenDeploy
-		a.deploy = NewDeploy(a.engine, msg.Services, true)
-		return a, a.deploy.Init()
-
-	// Log viewer (from deploy)
-	case OpenLogViewerMsg:
-		a.screen = screenLogViewer
-		a.logViewer = NewLogViewer(msg.Title)
-		a.logViewer.SetSize(a.width, a.height)
-		for _, line := range msg.Lines {
-			a.logViewer.AppendLine(line)
-		}
-		return a, nil
-
-	case CloseLogViewerMsg:
-		a.screen = screenDeploy
-		return a, nil
-
-	// Status
-	case ShowStatusMsg:
-		a.screen = screenStatus
-		a.status = NewStatus(a.engine, a.config)
-		return a, a.status.Init()
-
-	// History
-	case ShowHistoryMsg:
-		a.screen = screenHistory
-		a.history = NewHistory(a.engine)
-		return a, a.history.Init()
-
-	// Doctor
-	case ShowDoctorMsg:
-		a.screen = screenDoctor
-		a.doctor = NewDoctor(a.engine)
-		return a, a.doctor.Init()
-
-	// Service picker (for deploy service, logs, rollback)
-	case ShowServicePickerMsg:
-		a.screen = screenServicePicker
-		a.servicePicker = NewServicePicker(a.config, msg.Title, msg.Action)
-		return a, a.servicePicker.Init()
-
-	case ServicePickedMsg:
-		switch msg.Action {
-		case "deploy":
-			a.screen = screenDeploy
-			a.deploy = NewDeploy(a.engine, []string{msg.ServiceKey}, false)
-			return a, a.deploy.Init()
-		case "logs":
-			a.screen = screenRawOutput
-			a.rawOutput = NewRawOutput(a.engine, "Logs: "+msg.ServiceName, []string{"logs", msg.ServiceKey})
-			return a, a.rawOutput.Init()
-		case "rollback":
-			a.screen = screenRawOutput
-			a.rawOutput = NewRawOutput(a.engine, "Rollback: "+msg.ServiceName, []string{"rollback", msg.ServiceKey})
-			return a, a.rawOutput.Init()
-		}
-
-	case ServicePickerCancelMsg:
-		a.screen = screenDashboard
-		return a, nil
-
-	// Skills (raw output)
-	case ShowSkillsMsg:
-		a.screen = screenRawOutput
-		a.rawOutput = NewRawOutput(a.engine, "Skills", []string{"skill", "list"})
-		return a, a.rawOutput.Init()
-
-	// Cleanup (raw output)
-	case StartCleanupMsg:
-		a.screen = screenRawOutput
-		a.rawOutput = NewRawOutput(a.engine, "Cleanup", []string{"cleanup"})
-		return a, a.rawOutput.Init()
-
-	// Settings
-	case ShowSettingsMsg:
-		a.screen = screenSettings
-		a.settings = NewSettings()
-		return a, a.settings.Init()
-
-	// Back to dashboard
-	case BackToDashboardMsg:
-		a.screen = screenDashboard
-		a.dashboard = NewDashboard(a.engine, a.config)
-		a.dashboard.width = a.width
-		a.dashboard.height = a.height
-		return a, a.dashboard.Init()
-	}
-
-	// Route to active screen
-	return a.forwardToScreen(msg)
+func (m *Model) setToast(level int, text string) tea.Cmd {
+	st := m.env.State
+	st.Toast, st.ToastLevel = text, level
+	st.ToastUntil = m.env.Now().Add(6 * time.Second)
+	until := st.ToastUntil
+	return tea.Tick(6*time.Second, func(time.Time) tea.Msg { return toastClearMsg{until} })
 }
 
-func (a App) forwardToScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch a.screen {
-	case screenProjectPicker:
-		m, cmd := a.projects.Update(msg)
-		a.projects = m.(ProjectsModel)
-		return a, cmd
-	case screenDashboard:
-		m, cmd := a.dashboard.Update(msg)
-		a.dashboard = m.(DashboardModel)
-		return a, cmd
-	case screenDeploy:
-		m, cmd := a.deploy.Update(msg)
-		a.deploy = m.(DeployModel)
-		return a, cmd
-	case screenLogViewer:
-		lv, cmd := a.logViewer.Update(msg)
-		a.logViewer = lv
-		return a, cmd
-	case screenStatus:
-		m, cmd := a.status.Update(msg)
-		a.status = m.(StatusModel)
-		return a, cmd
-	case screenHistory:
-		m, cmd := a.history.Update(msg)
-		a.history = m.(HistoryModel)
-		return a, cmd
-	case screenDoctor:
-		m, cmd := a.doctor.Update(msg)
-		a.doctor = m.(DoctorModel)
-		return a, cmd
-	case screenServicePicker:
-		m, cmd := a.servicePicker.Update(msg)
-		a.servicePicker = m.(ServicePickerModel)
-		return a, cmd
-	case screenRawOutput:
-		m, cmd := a.rawOutput.Update(msg)
-		a.rawOutput = m.(RawOutputModel)
-		return a, cmd
-	case screenSettings:
-		m, cmd := a.settings.Update(msg)
-		a.settings = m.(SettingsModel)
-		return a, cmd
+func (m *Model) refresh(what string) tea.Cmd {
+	e := m.env
+	switch what {
+	case "status":
+		return e.loadStatus()
+	case "history":
+		return e.loadHistory()
+	case "docker":
+		return e.loadDocker()
+	case "fleet":
+		return e.loadFleet()
+	case "doctor":
+		return e.loadDoctor(false)
 	}
-	return a, nil
+	return tea.Batch(e.loadStatus(), e.loadHistory(), e.loadDocker(), e.loadFleet())
 }
 
-func (a App) View() string {
-	view := ""
-	switch a.screen {
-	case screenProjectPicker:
-		view = a.projects.View()
-	case screenDashboard:
-		view = a.dashboard.View()
-	case screenDeploy:
-		view = a.deploy.View()
-	case screenLogViewer:
-		view = a.logViewer.View()
-	case screenStatus:
-		view = a.status.View()
-	case screenHistory:
-		view = a.history.View()
-	case screenDoctor:
-		view = a.doctor.View()
-	case screenServicePicker:
-		view = a.servicePicker.View()
-	case screenRawOutput:
-		view = a.rawOutput.View()
-	case screenSettings:
-		view = a.settings.View()
+func (m *Model) reloadConfig() tea.Cmd {
+	st := m.env.State
+	var p *config.Project
+	if st.Project != nil {
+		np, err := st.Project.Reload()
+		if err != nil {
+			return m.setToast(lvlErr, err.Error())
+		}
+		p = np
+	} else if path := config.FindIn(m.env.Cwd); path != "" {
+		np, err := config.Load(path)
+		if err != nil {
+			return m.setToast(lvlErr, err.Error())
+		}
+		p = np
 	}
+	st.setProject(p, m.env.Cwd)
+	m.env.Project = p
+	return tea.Batch(m.broadcast(reloadConfigMsg{}), m.env.loadStatus(), m.env.loadHistory())
+}
 
-	// Overlay Ctrl+C warning
-	if a.ctrlCPressed {
-		warning := lipgloss.NewStyle().
-			Foreground(Yellow).
-			Bold(true).
-			Render("  ! Press Ctrl+C again to quit")
-		view += "\n" + warning
+func (m *Model) execProcess(cmd *exec.Cmd, after func(error) tea.Msg) tea.Cmd {
+	return func() tea.Msg { return execMsg{cmd: cmd, after: after} }
+}
+
+// keyFromString turns a help label like "r" or "enter" into a key message.
+func keyFromString(s string) tea.KeyMsg {
+	switch s {
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "space", " ":
+		return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
 	}
-
-	return view
+	r := []rune(s)
+	if len(r) > 0 {
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: r[:1]}
+	}
+	return tea.KeyMsg{}
 }

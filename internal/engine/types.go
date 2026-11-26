@@ -129,13 +129,30 @@ type DeployEvent struct {
 	Timeout   int      `json:"timeout"`
 	DryRun    bool     `json:"dry_run"`
 	Duration  float64  `json:"duration"`
-	Succeeded int      `json:"succeeded"`
-	Failed    int      `json:"failed"`
-	Skipped   int      `json:"skipped"`
 	Files     []string `json:"files"`
+
+	// summary event (muster ≥ 0.5.61; "succeeded" is an older spelling)
+	Deployed   int              `json:"deployed"`
+	Succeeded  int              `json:"succeeded"`
+	Failed     int              `json:"failed"`
+	Skipped    int              `json:"skipped"`
+	RolledBack int              `json:"rolled_back"`
+	Services   []SummaryService `json:"services"`
 
 	Raw json.RawMessage `json:"-"`
 }
+
+// SummaryService is one row of the summary event.
+type SummaryService struct {
+	Service  string  `json:"service"`
+	Result   string  `json:"result"` // deployed, failed, skipped, rolled back
+	Duration float64 `json:"duration"`
+	Health   string  `json:"health"`
+	LogFile  string  `json:"log_file"`
+}
+
+// OK counts successful services in a summary (either spelling).
+func (ev DeployEvent) OK() int { return max(ev.Deployed, ev.Succeeded) }
 
 // Field returns an arbitrary field from the raw event.
 func (ev DeployEvent) Field(name string) any {

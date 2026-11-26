@@ -1,122 +1,122 @@
+// muster-tui is the interactive terminal UI for muster. The bash `muster` CLI
+// stays the engine and the headless interface (`muster <cmd> --json`).
 package main
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/Muster-dev/muster-tui/internal/auth"
 	"github.com/Muster-dev/muster-tui/internal/config"
+	"github.com/Muster-dev/muster-tui/internal/docker"
 	"github.com/Muster-dev/muster-tui/internal/engine"
-	"github.com/Muster-dev/muster-tui/internal/registry"
+	"github.com/Muster-dev/muster-tui/internal/theme"
 	"github.com/Muster-dev/muster-tui/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const version = "0.1.0"
+var version = "1.0.0-dev"
+
+const usage = `muster-tui — the interactive UI for muster
+
+Usage:
+  muster-tui [flags]          open the TUI for the project in this folder
+  muster <command> [--json]   headless use goes through the muster CLI
+
+Flags:
+  -C, --dir <path>     run as if started in <path>
+      --set-token <t>  save a MUSTER_TOKEN for the CLI's --json commands
+  -v, --version        print the version
+  -h, --help           show this help
+
+Inside the TUI type commands at the prompt (deploy, logs api, docker, help),
+press / for completions, Ctrl+K for every action, ? for keys.
+`
 
 func main() {
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
+	dir := ""
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; a {
 		case "--version", "-v":
-			fmt.Printf("muster-tui v%s\n", version)
+			fmt.Printf("muster-tui %s\n", version)
 			return
 		case "--help", "-h":
-			fmt.Println("muster-tui — TUI frontend for muster")
-			fmt.Println()
-			fmt.Println("Usage: muster-tui [flags]")
-			fmt.Println()
-			fmt.Println("Flags:")
-			fmt.Println("  -v, --version   Show version")
-			fmt.Println("  -h, --help      Show this help")
-			fmt.Println("  --set-token     Save an auth token for muster")
+			fmt.Print(usage)
 			return
 		case "--set-token":
-			if len(os.Args) < 3 {
-				fmt.Fprintln(os.Stderr, "Usage: muster-tui --set-token <token>")
-				os.Exit(1)
+			if i+1 >= len(args) || args[i+1] == "" {
+				fmt.Fprintln(os.Stderr, "usage: muster-tui --set-token <token>")
+				os.Exit(2)
 			}
-			if err := auth.SaveToken(os.Args[2]); err != nil {
-				fmt.Fprintf(os.Stderr, "Error saving token: %v\n", err)
+			if err := auth.SaveToken(args[i+1]); err != nil {
+				fmt.Fprintf(os.Stderr, "muster-tui: saving token: %v\n", err)
 				os.Exit(1)
 			}
 			fmt.Println("Token saved.")
 			return
+		case "-C", "--dir":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "usage: muster-tui --dir <path>")
+				os.Exit(2)
+			}
+			dir = args[i+1]
+			i++
+		default:
+			fmt.Fprintf(os.Stderr, "muster-tui: unknown argument %q\n\n%s", a, usage)
+			os.Exit(2)
 		}
 	}
-
-	// Load auth token
-	token, err := auth.LoadToken()
-	if err != nil || token == "" {
-		fmt.Fprintln(os.Stderr, "No auth token configured.")
-		fmt.Fprintln(os.Stderr, "Set MUSTER_TOKEN env var or run: muster-tui --set-token <token>")
-		fmt.Fprintln(os.Stderr, "Create a token with: muster auth create <name> --scope admin")
+	if err := run(dir); err != nil {
+		fmt.Fprintf(os.Stderr, "muster-tui: %v\n", err)
 		os.Exit(1)
 	}
+}
 
-	// Create engine
-	eng, err := engine.NewEngine(token)
+func run(dir string) error {
+	theme.Init()
+	cwd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
-
-	// Try to find config in current directory first
-	configPath, configErr := config.FindConfig()
-
-	if configErr == nil {
-		// We're inside a muster project — go straight to dashboard
-		cfg, err := config.LoadDeploy(configPath)
+	if dir != "" {
+		cwd, err = filepath.Abs(dir)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-			os.Exit(1)
+			return err
 		}
-
-		app := tui.NewApp(eng, cfg)
-		p := tea.NewProgram(app, tea.WithAltScreen())
-		if _, err := p.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		return
 	}
 
-	// Not in a project directory — check the registry for known projects
-	pf, err := registry.Load()
-	if err != nil || len(pf.Projects) == 0 {
-		fmt.Fprintln(os.Stderr, "No muster.json found in current directory and no projects registered.")
-		fmt.Fprintln(os.Stderr, "Run 'muster setup' in a project directory first.")
-		os.Exit(1)
-	}
+	deps := tui.Deps{Cwd: cwd, Version: version, HistoryPath: filepath.Join(config.MusterHome(), "tui_history")}
 
-	// Single project — go straight to it
-	if len(pf.Projects) == 1 {
-		p := pf.Projects[0]
-		cfgPath := config.FindConfigIn(p.Path)
-		if cfgPath == "" {
-			fmt.Fprintf(os.Stderr, "Registered project %s no longer has a config file.\n", p.Path)
-			fmt.Fprintln(os.Stderr, "Run 'muster projects --prune' to clean up.")
-			os.Exit(1)
-		}
-		cfg, err := config.LoadDeploy(cfgPath)
+	// Project: walk up from cwd. A broken muster.json is reported, not fatal.
+	if path, err := config.Find(cwd); err == nil {
+		p, err := config.Load(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-			os.Exit(1)
+			return err
 		}
-
-		app := tui.NewApp(eng, cfg)
-		prog := tea.NewProgram(app, tea.WithAltScreen())
-		if _, err := prog.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		return
+		deps.Project = p
 	}
 
-	// Multiple projects — show project picker
-	app := tui.NewAppWithPicker(eng, pf.Projects)
-	p := tea.NewProgram(app, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	token, _, tokErr := auth.LoadToken()
+	if bin, err := engine.Locate(); err == nil {
+		deps.Engine = engine.New(bin, token, cwd)
+	} else {
+		deps.EngineErr = err
 	}
+	if tokErr != nil {
+		deps.TokenMissing = true
+		deps.CanBootstrap = !auth.MachineHasTokens()
+	}
+	if d, err := docker.Locate(); err == nil {
+		deps.Docker = d
+	}
+
+	m := tui.New(deps)
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	final, err := p.Run()
+	if fm, ok := final.(tui.Model); ok {
+		fm.Shutdown()
+	}
+	return err
 }

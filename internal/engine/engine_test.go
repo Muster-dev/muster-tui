@@ -98,7 +98,7 @@ func TestDeploySuccessWithSummaryAndUnknownFields(t *testing.T) {
 			t.Errorf("missing %q event (got %v)", k, kinds)
 		}
 	}
-	if summary.Succeeded != 1 || summary.Duration != 4.2 || summary.Field("new_field") == nil {
+	if summary.OK() != 1 || summary.Duration != 4 || len(summary.Services) != 1 || summary.Services[0].Health != "healthy" || summary.Field("new_field") == nil {
 		t.Fatalf("summary = %+v", summary)
 	}
 	argv, _ := os.ReadFile(log)
@@ -124,6 +124,27 @@ func TestDeployFailure(t *testing.T) {
 	}
 	if err := s.Wait(); err == nil {
 		t.Fatal("expected non-zero exit to surface as an error")
+	}
+}
+
+func TestDeployHooksNotApproved(t *testing.T) {
+	e, _ := fake(t, "unapproved")
+	s, _ := e.Deploy(context.Background(), []string{"api"}, DeployOptions{})
+	var gate DeployEvent
+	var stderr []string
+	for _, ev := range collect(t, s) {
+		switch ev.Event {
+		case "error":
+			gate = ev
+		case "stderr":
+			stderr = append(stderr, ev.Line)
+		}
+	}
+	if gate.Reason != "hooks_not_approved" || len(stderr) != 1 {
+		t.Fatalf("gate=%+v stderr=%q", gate, stderr)
+	}
+	if s.Wait() == nil {
+		t.Fatal("expected exit 1")
 	}
 }
 
