@@ -630,6 +630,13 @@ func (d *deployScreen) finishRun(r *svcRun, canceled bool) {
 	}
 }
 
+func (d *deployScreen) failExit(r *svcRun) int {
+	if r.timeout > 0 {
+		return 124
+	}
+	return r.exitCode
+}
+
 func (d *deployScreen) runFor(key string) *svcRun {
 	for _, r := range d.runs {
 		if r.key == key {
@@ -682,6 +689,9 @@ func (d *deployScreen) choices() []string {
 		if h := d.runs[d.cur].hint; h != nil && h.Fix != nil && !d.runs[d.cur].fixed {
 			out = append(out, "Fix")
 		}
+	}
+	if ok, _ := d.env.assistantReady(); ok {
+		out = append(out, "Explain with AI")
 	}
 	return out
 }
@@ -737,6 +747,11 @@ func (d *deployScreen) recover(choice string) (Screen, tea.Cmd) {
 			return d, nav(newApproval(d.env, "retry"))
 		}
 		return d, d.startRun()
+	case "explain with ai":
+		if ok, why := d.env.assistantReady(); !ok {
+			return d, toast(lvlInfo, "Muster Assistant: "+why)
+		}
+		return d, nav(newAskForFailure(d.env, r.key, d.failExit(r), r.logFile))
 	case "fix":
 		if r.hint == nil || r.hint.Fix == nil {
 			return d, toast(lvlInfo, "muster has no automatic fix for this one")
@@ -820,6 +835,9 @@ func (d *deployScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 			return s, cmd, true
 		case "f":
 			s, cmd := d.recover("fix")
+			return s, cmd, true
+		case "e":
+			s, cmd := d.recover("explain with ai")
 			return s, cmd, true
 		case "r":
 			s, cmd := d.recover("retry")
@@ -1099,8 +1117,13 @@ func (d *deployScreen) recoveryLines(w int) []string {
 		btns = append(btns, button(label, i == d.choice))
 	}
 	keys := "r · b · s · a"
-	if len(ch) > len(recoveryChoices) {
-		keys += " · f"
+	for _, c := range ch[len(recoveryChoices):] {
+		switch c {
+		case "Fix":
+			keys += " · f"
+		case "Explain with AI":
+			keys += " · e"
+		}
 	}
 	out = append(out, "", strings.Join(btns, " ")+"   "+theme.Dim.Render(keys))
 	return out
@@ -1213,8 +1236,13 @@ func (d *deployScreen) Hint() string {
 		return theme.AccentFg.Render(d.env.Spin()) + " Rolling back — " + keyHint("Esc", "cancel")
 	case phFailed:
 		pairs := []string{"r", "retry", "b", "rollback", "s", "skip", "a", "abort"}
-		if len(d.choices()) > len(recoveryChoices) {
-			pairs = append(pairs, "f", "fix")
+		for _, c := range d.choices()[len(recoveryChoices):] {
+			switch c {
+			case "Fix":
+				pairs = append(pairs, "f", "fix")
+			case "Explain with AI":
+				pairs = append(pairs, "e", "explain with AI")
+			}
 		}
 		return theme.Err.Render(d.runs[d.cur].key+" failed") + theme.Dim.Render(" — ") + keyHint(pairs...)
 	}
@@ -1223,7 +1251,7 @@ func (d *deployScreen) Hint() string {
 
 func (d *deployScreen) Keys() []KeyHelp {
 	return []KeyHelp{
-		{"Enter", "start / choose"}, {"r b s a", "retry · rollback · skip · abort"}, {"f", "apply muster's fix (asks first)"}, {"← →", "move between choices"},
+		{"Enter", "start / choose"}, {"r b s a", "retry · rollback · skip · abort"}, {"f", "apply muster's fix (asks first)"}, {"e", "explain with AI (Fleet Cloud)"}, {"← →", "move between choices"},
 		{"j / k", "select a service"}, {"Space", "expand / collapse"}, {"Ctrl+O", "full log"}, {"Esc", "cancel deploy"},
 	}
 }

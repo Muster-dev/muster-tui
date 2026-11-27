@@ -204,6 +204,22 @@ func (m *Model) run(p prompt.Parsed) tea.Cmd {
 			svc = p.Args[0]
 		}
 		return m.open(newExplainScreen(e, svc))
+	case "ask":
+		if c := firstCmd(m.needProject(), m.needEngine(), m.needV07("ask")); c != nil {
+			return c
+		}
+		q := ""
+		if len(p.Args) > 0 {
+			q = p.Args[0]
+		}
+		// A running session is still there: go back to it.
+		if a, ok := m.screens["ask"].(*askScreen); ok && a.live() && q == "" {
+			return m.open(a)
+		}
+		if a, ok := m.screens["ask"].(*askScreen); ok && a.live() {
+			return m.setToast(lvlWarn, "The assistant is still answering — type ask to go back to it, Esc there stops it")
+		}
+		return m.open(newAsk(e, q))
 	case "logs":
 		if c := m.needProject(); c != nil {
 			return c

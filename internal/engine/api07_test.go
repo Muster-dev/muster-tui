@@ -287,7 +287,8 @@ func TestAskSessionApproveAndFollowUp(t *testing.T) {
 			t.Errorf("missing %s in %s", want, got)
 		}
 	}
-	if !strings.Contains(text.String(), "Rolled back **api**") || !strings.Contains(text.String(), "follow-up") {
+	if !strings.HasPrefix(text.String(), "Let me check the current status first.\nThe **api** deploy failed") ||
+		!strings.Contains(text.String(), "Rolled back **api**") || !strings.Contains(text.String(), "follow-up") {
 		t.Fatalf("text: %q", text.String())
 	}
 	in, _ := os.ReadFile(stdin)

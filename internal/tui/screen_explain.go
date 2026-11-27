@@ -161,6 +161,10 @@ func (s *explainScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 		if h := s.ex.Hint; h != nil && h.Fix != nil && !s.env.Tasks.Running(s.fixID) {
 			return s, confirmFix(s.Key(), s.target(), h), true
 		}
+	case "a":
+		if ok, _ := s.env.assistantReady(); ok && s.target() != "" {
+			return s, nav(newAskForFailure(s.env, s.target(), exitCodeOf(s.ex), s.ex.Log)), true
+		}
 	case "l":
 		if t := s.target(); t != "" {
 			return s, runLine("logs " + t), true
@@ -262,6 +266,9 @@ func (s *explainScreen) footer() string {
 	if h := s.ex.Hint; h != nil && h.Fix != nil {
 		pairs = append(pairs, "f", "fix")
 	}
+	if ok, _ := s.env.assistantReady(); ok {
+		pairs = append(pairs, "a", "explain with AI")
+	}
 	pairs = append(pairs, "l", "logs", "d", "deploy", "Esc", "back")
 	return keyHint(pairs...)
 }
@@ -269,5 +276,5 @@ func (s *explainScreen) footer() string {
 func (s *explainScreen) Hint() string { return "" }
 
 func (s *explainScreen) Keys() []KeyHelp {
-	return []KeyHelp{{"f", "apply the fix (asks first)"}, {"l", "logs"}, {"d", "deploy"}, {"Esc", "back"}}
+	return []KeyHelp{{"f", "apply the fix (asks first)"}, {"a", "explain with AI (Fleet Cloud)"}, {"l", "logs"}, {"d", "deploy"}, {"Esc", "back"}}
 }

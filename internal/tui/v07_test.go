@@ -316,3 +316,120 @@ func TestStreamRoutingFollowsMustersOrder(t *testing.T) {
 		t.Fatalf("phase=%v failed=%s web=%v", d.phase, d.failedService(), d.runs[2].state)
 	}
 }
+
+func startFlowModel(t *testing.T, m Model, w, h int) *flow {
+	t.Helper()
+	return &flow{t: t, tm: teatest.NewTestModel(t, m, teatest.WithInitialTermSize(w, h))}
+}
+
+func signedIn(m Model) Model {
+	m.env.State.Cloud.HasToken = true
+	m.env.State.Cloud.LoggedIn = true
+	return m
+}
+
+func TestAskConsentStreamApproveFollowUp(t *testing.T) {
+	dir := t.TempDir()
+	stdin, log := filepath.Join(dir, "stdin"), filepath.Join(dir, "argv")
+	m := signedIn(New(deps07(t, "consent", "FAKE_STDIN_LOG="+stdin, "FAKE_LOG="+log)))
+	f := startFlowModel(t, m, 120, 34)
+	f.send(runLineMsg{"ask why did api fail?"}).wait("Send redacted logs and config from acme-store", "y yes, send")
+	f.key("y").wait("free plan · 4 sessions left", "Let me check the current status first.", "Checking service status", "the database password is wrong", "Roll back api to the previous version", "Run this?")
+	f.key("y").wait("Approved: Roll back api", "Rolling back api", "Rolled back api", "Ask a follow-up")
+	f.send(keys("and web?")...)
+	f.key("enter").wait("You asked a follow-up")
+	f.key("enter").wait("new question")
+	m, view := f.end()
+	in, _ := os.ReadFile(stdin)
+	if string(in) != "{\"approve\":\"tu_2\"}\n{\"message\":\"and web?\"}\n{\"end\":true}\n" {
+		t.Fatalf("stdin: %q", in)
+	}
+	argv, _ := os.ReadFile(log)
+	if !strings.Contains(string(argv), "ask --json --yes -- why did api fail?") {
+		t.Fatalf("argv:\n%s", argv)
+	}
+	if strings.Contains(view, "**") {
+		t.Fatalf("markdown markers leaked:\n%s", view)
+	}
+	if a := m.screens["ask"].(*askScreen); a.phase != askDone {
+		t.Fatalf("phase=%v", a.phase)
+	}
+}
+
+func TestAskDeclineAndConsentRefused(t *testing.T) {
+	dir := t.TempDir()
+	stdin := filepath.Join(dir, "stdin")
+	m := New(deps07(t, "", "FAKE_STDIN_LOG="+stdin))
+	_ = os.MkdirAll(filepath.Join(m.env.State.Project.Dir, ".muster"), 0o755)
+	consent := filepath.Join(m.env.State.Project.Dir, ".muster", "assistant.json")
+	_ = os.WriteFile(consent, []byte(`{"consent":true}`), 0o600)
+	defer os.Remove(consent)
+	m = New(deps07(t, "", "FAKE_STDIN_LOG="+stdin))
+	f := startFlowModel(t, m, 120, 34)
+	f.send(runLineMsg{"ask why?"}).wait("Run this?")
+	f.key("n").wait("Declined: Roll back api", "not rolling back")
+	f.key("esc")
+	f.end()
+	if in, _ := os.ReadFile(stdin); !strings.HasPrefix(string(in), "{\"decline\":\"tu_2\"}\n") {
+		t.Fatalf("stdin: %q", in)
+	}
+
+	os.Remove(consent)
+	log := filepath.Join(dir, "argv2")
+	m = New(deps07(t, "", "FAKE_LOG="+log))
+	f = startFlowModel(t, m, 120, 34)
+	f.send(runLineMsg{"ask why?"}).wait("Send redacted logs")
+	f.key("n").wait("Nothing was sent")
+	f.end()
+	if argv, _ := os.ReadFile(log); strings.Contains(string(argv), "ask") {
+		t.Fatalf("asked without consent:\n%s", argv)
+	}
+}
+
+func TestAskNotLoggedInAndPayment(t *testing.T) {
+	m := New(deps07(t, "not_logged_in"))
+	m.screens["ask"] = nil
+	delete(m.screens, "ask")
+	a := newAsk(m.env, "hi")
+	a.consent, a.phase = true, askRunning
+	m = feed(m, tea.WindowSizeMsg{Width: 120, Height: 30})
+	f := startFlowModel(t, signedIn(m), 120, 30)
+	f.send(navMsg{a}).wait("needs a Fleet Cloud login", "Sign in to Fleet Cloud", "cloud login")
+	fm, _ := f.end()
+	if ok, why := fm.env.assistantReady(); ok || why != "needs a Fleet Cloud login" {
+		t.Fatalf("assistant should be hidden now: %v %q", ok, why)
+	}
+
+	m = New(deps07(t, "payment"))
+	a = newAsk(m.env, "hi")
+	a.consent, a.phase = true, askRunning
+	f = startFlowModel(t, signedIn(m), 120, 30)
+	f.send(navMsg{a}).wait("sessions are used up", "Upgrade to keep going: https://cloud.example.test/billing")
+	f.end()
+}
+
+func TestExplainWithAIOnlyWhenAvailable(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "argv")
+	// Not signed in: no button.
+	m := New(deps07(t, "approved", "FAKE_FAIL=api"))
+	f := startFlowModel(t, m, 120, 34)
+	f.send(runLineMsg{"deploy api web"}).wait("Abort   Fix")
+	_, view := f.end()
+	if strings.Contains(view, "Explain with AI") {
+		t.Fatalf("shown without a login:\n%s", view)
+	}
+
+	m = signedIn(New(deps07(t, "approved", "FAKE_FAIL=api", "FAKE_LOG="+log)))
+	_ = os.MkdirAll(filepath.Join(m.env.State.Project.Dir, ".muster"), 0o755)
+	consent := filepath.Join(m.env.State.Project.Dir, ".muster", "assistant.json")
+	_ = os.WriteFile(consent, []byte(`{"consent":true}`), 0o600)
+	defer os.Remove(consent)
+	f = startFlowModel(t, m, 120, 34)
+	f.send(runLineMsg{"deploy api web"}).wait("Explain with AI", "· e")
+	f.key("e").wait("read-only", "Why did the api deploy fail")
+	f.end()
+	argv, _ := os.ReadFile(log)
+	if !strings.Contains(string(argv), "ask --json --yes --read-only -- Why did the api deploy fail, and how do I fix it?") {
+		t.Fatalf("argv:\n%s", argv)
+	}
+}
