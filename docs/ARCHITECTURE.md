@@ -24,7 +24,7 @@ main.go ──► tui.New(Deps) ──► tea.Program (alt screen, mouse)
 |---|---|---|
 | `internal/engine` | `Engine` runs `muster` with `MUSTER_TOKEN`, `NO_COLOR=1`, `MUSTER_NO_VERIFY` passthrough and the project dir as cwd. Typed results for `status`, `history`, `doctor`, `hooks`, `fleet list/status`; `Deploy` returns a `Stream[DeployEvent]`; `Raw` returns a `Stream[string]` for commands without JSON (logs, rollback, setup, hooks approve). Every call takes a `context.Context`; cancelling kills the whole process group. Unknown JSON fields are kept in `Event.Extra`. | `muster` binary |
 | `internal/docker` | `Client` shells out to `docker … --format '{{json .}}'` for containers, stats, images, volumes, `system df`, and runs actions (restart/stop/start/rm/pull/prune) and `logs -f` streams. `ErrDaemonDown` is detected from stderr so screens can explain it. | `docker` binary |
-| `internal/fleet` | Machines and groups from `muster fleet list --json` (accepts both the object and the legacy array shape) with a fallback to `remotes.json`; `Test` runs `ssh -o BatchMode=yes` with a short timeout; cloud login state from `~/.muster/settings.json` + `~/.muster/tokens/cloud.json`. | `muster`, `ssh`, files |
+| `internal/fleet` | Machines and groups from `muster fleet list --json` (muster 0.7 arrays of objects, or the older objects keyed by name) with a fallback to `remotes.json`; `Test` runs `ssh -o BatchMode=yes` with a short timeout; cloud login state from `~/.muster/settings.json` + `~/.muster/tokens/cloud.json`. | `muster`, `ssh`, files |
 | `internal/config` | `Project` = path + an order-preserving JSON document (`jsonx.Object`) + typed accessors. Editing goes through the document so unknown keys and key order survive a save. `Validate` checks health/creds/order/remote/k8s. `HookChanges` compares hook files with `.muster/hooks.manifest`. `Scan` is a fast Go preview scanner (compose, Dockerfile, k8s, package.json/go.mod/…) used by onboarding. Global settings live in `~/.muster/settings.json`. | files |
 | `internal/prompt` | `Registry` of commands (name, args kind, usage, summary, keybinding). `Parse` tokenises input (slash form, multi-word commands, flags, filler words) and returns a `Parsed` or an `Error` with a "did you mean" suggestion. `Complete` returns fuzzy-ranked candidates for the word under the cursor using a `Context` (services, machines, groups, containers). `History` persists to `~/.muster/tui_history` and supports reverse search. | — |
 | `internal/theme` | All colours are `lipgloss.AdaptiveColor` so light and dark terminals work; one accent (mustard `#E8B931`, darker variant on light backgrounds). `NO_COLOR` switches lipgloss to the ASCII profile. Glyphs differ by state, so meaning never depends on colour alone. `theme.Static` disables animation for tests. | — |
@@ -68,12 +68,14 @@ Live screens are cached by key, so a deploy keeps running and updating while you
 |---|---|---|
 | Onboarding | `screen_onboarding.go` | `config.Scan` preview → `muster setup --stack … --services … --order … --health …` (raw stream) |
 | Dashboard | `screen_dashboard.go` | shared state (`status --json`, `history --json`, `doctor --json`, docker summary) |
-| Deploy | `screen_deploy.go` | `muster deploy --json <svc>` per service, orchestrated by the TUI so it can stop on failure and offer Retry / Rollback / Skip / Abort; dry run uses one `deploy --json --dry-run` call |
-| Hook approval | `screen_approval.go` | `config.HookChanges` + `git diff` for tracked files; Approve runs `muster hooks approve` |
+| Deploy | `screen_deploy.go` | muster ≥ 0.7: one `deploy --json --stop-on-failure [--from svc]` stream, events routed by service; older: `deploy --json <svc>` per service. Stops on failure with Retry / Rollback / Skip / Abort, Likely cause / Try (`hint` event or `explain --json`), Fix (`explain --fix --yes` after a confirm), Explain with AI; dry run uses one `deploy --json --dry-run` call |
+| Hook approval | `screen_approval.go` | muster ≥ 0.7: `hooks status --json`, Approve (after a confirm) runs `hooks approve --yes --json`; older: `config.HookChanges` + interactive `muster hooks approve` |
+| Explain | `screen_explain.go` | `explain [svc] --json`; Fix runs `explain --fix --yes` after a confirm |
+| Assistant | `screen_ask.go` | `ask --json` NDJSON events; approvals / follow-ups written to its stdin |
 | Service detail | `screen_service.go` | config + state + `history --json <svc>` |
-| Logs | `screen_logs.go` | `muster logs <svc>` or `docker logs -f` raw stream; ring buffer, follow, search, level filter, wrap, jump to error, copy |
+| Logs | `screen_logs.go` | `muster logs <svc> --json --tail 200 --follow` (≥ 0.7), `muster logs <svc>` or `docker logs -f` raw stream; ring buffer, follow, search, level filter, wrap, jump to error, copy |
 | Docker | `screen_docker.go` | `docker ps/stats/images/volume ls/system df`; actions; exec shell via `tea.ExecProcess` |
-| Servers | `screen_servers.go` | `fleet list --json`, ssh test, `fleet deploy/status/rollback` raw streams, ssh via `tea.ExecProcess`, add-machine form → `muster fleet add` |
+| Servers | `screen_servers.go` | `fleet list --json` (0.7 array shape or the older keyed shape), `fleet status --json` (U), ssh test, `fleet deploy/status/rollback` raw streams, ssh via `tea.ExecProcess`, add-machine form → `muster fleet add` |
 | History | `screen_history.go` | `history --json --all` with service/action/status filters |
 | Doctor | `screen_doctor.go` | `doctor --json` / `doctor --fix --json` |
 | Settings | `screen_settings.go` | `~/.muster/settings.json` + `muster.json` via `config.Project`, validation, reorder, `$EDITOR` escape hatch |
@@ -99,6 +101,11 @@ Cancelling kills the child's process group (`Setpgid` + `cmd.Cancel`), so
 `docker compose` grandchildren die too.
 
 ## Engine contract and fallbacks
+
+* **Version gating:** `muster --version` is read at startup into
+  `State.Caps` (`engine.CapsFor`). `Caps.EngineAPI` (muster ≥ 0.7.0) turns on
+  the engine-API code paths; older CLIs keep the earlier ones and commands
+  that need 0.7 say how to update (`Model.needV07`).
 
 * JSON commands need `MUSTER_TOKEN` (the CLI's `_json_auth_gate`). The token is
   resolved from `MUSTER_TOKEN`, `~/.muster/tui/config.json` (what `muster`

@@ -11,6 +11,32 @@ ignores fields it doesn't know, so extra fields are always safe.
 Priority: **P1** blocks a spec'd feature or forces fragile parsing · **P2**
 makes a screen noticeably better · **P3** nice to have.
 
+## Status with muster 0.7.0
+
+muster 0.7.0 shipped the engine API (`docs/ENGINE-API.md` in the muster
+repo). muster-tui 1.1 uses it when `muster --version` is 0.7.0 or newer and
+keeps the fallbacks below for older CLIs.
+
+| # | Gap | 0.7.0 | muster-tui 1.1 uses |
+|---|-----|-------|---------------------|
+| 0 | token store race | fixed (best-effort locked write) | still serialises token-checked calls (harmless) |
+| 1 | deploy takes one service | fixed | `deploy --json svc…` |
+| 2 | stop-on-failure / resume | `--stop-on-failure`, `--from` | one stream per deploy, Skip/Retry resume with `--from` |
+| 3 | setup scan as JSON | `setup --scan --dry-run --json` | not yet (onboarding keeps the Go preview scanner) |
+| 4 | hook approval without a terminal | `hooks status --json`, `hooks approve --yes --json` | approvals screen; the CLI is the authority |
+| 5 | k8s diagnostics in JSON | `diagnosis` event | Likely cause / Try in the failure view |
+| 6 | preflight / gate details | partly (`files` on `hooks_not_approved`) | open: preflight checks as structured detail |
+| 7 | version / image per service | open | — |
+| 8 | restart | `restart <svc> --json` | `restart` command |
+| 9 | rollback / logs as JSON | `rollback --json`, `logs --json --tail N [--follow]` | both |
+| 10 | status details | stack, target, last deploy, lock holders, replicas | service screen, dashboard lock notice; open: latency and error detail |
+| 11 | fleet | one shape for `fleet list` / `fleet status` | Servers view (both shapes parsed), `U` fleet health |
+| — | failure explanations | `hint` event, `explain --json`, `explain --fix --yes` | failure view and `explain` screen, Fix after a confirm |
+| — | assistant | `ask --json` | `ask` screen, Explain with AI |
+
+The sections below are the original requests, kept for the items that are
+still open.
+
 ---
 
 ## 0. Concurrent `--json` calls wipe the token store — P0 (bug)

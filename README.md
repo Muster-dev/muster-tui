@@ -47,6 +47,10 @@ go build -o muster-tui .
 Requires [muster](https://github.com/Muster-dev/muster) on your `PATH` (and
 Docker for the Docker screen). Go 1.25+ to build.
 
+muster 0.7.0 or newer is recommended. With an older CLI, muster-tui still
+works, but `explain`, `ask`, `restart` via the CLI, in-app hook approval and
+the single-call deploy are hidden. It says so at startup; run `muster update`.
+
 ## Use
 
 ```bash
@@ -71,7 +75,9 @@ services, machines and containers; anything unrecognised gets a
 | `dry-run` / `plan` | Show the plan, change nothing |
 | `logs api` | Follow logs |
 | `rollback api` | Roll back (asks first) |
-| `restart web` | Restart the container (or redeploy) |
+| `restart web` | Restart via the stack (restart hook, k8s, compose, docker) or redeploy |
+| `explain [api]` | Why the last deploy failed: Likely cause / Try, and a one-key fix |
+| `ask [question]` | Muster Assistant (Fleet Cloud): explains failures, proposes actions you approve |
 | `status` | Check health now |
 | `open api` | Service detail |
 | `history [api]` | Deploy timeline |
@@ -108,10 +114,12 @@ Filler words are fine (`logs for api`), so are unique prefixes (`dep api`).
 
 Screen keys (also in `?`):
 
-* **Deploy failure** — `r` retry · `b` rollback · `s` skip · `a` abort, `←` `→` + Enter
+* **Deploy failure** — `r` retry · `b` rollback · `s` skip · `a` abort · `f` fix · `e` explain with AI, `←` `→` + Enter
 * **Logs** — `/` search, `n`/`N`, `e`/`E` jump to errors, `L` level filter, `w` wrap, `y` copy, `End` follow
 * **Docker** — `1`-`4` tabs, `l` logs, `r` restart, `s` stop/start, `x` shell, `d` remove, `p` pull, `P` prune
-* **Servers** — `t` test, `Enter` ssh, `d` deploy, `u` status, `b` rollback, `a` add
+* **Servers** — `t` test, `U` fleet health, `Enter` ssh, `d` deploy, `u` status, `b` rollback, `a` add
+* **Explain** — `f` apply the fix (asks first), `a` explain with AI, `l` logs, `d` deploy
+* **Assistant** — `y`/`n` run or decline a proposed action, Enter sends a follow-up (empty finishes)
 * **Service** — `d` deploy, `p` dry run, `l` logs, `b` rollback, `r` restart, `e` edit hook, `s` settings
 * **Settings** — `[` `]` sections, Enter/Space edit, `←` `→` cycle, `J`/`K` reorder, `Ctrl+S` save, `e` `$EDITOR`
 * **History** — `s` service, `f` result, `a` action filters · **Doctor** — `f` fix what you can
@@ -126,10 +134,15 @@ The mouse works for scrolling and for picking services in the left rail.
 * **Dashboard** — health per service, last deploy, recent activity, things
   that need attention (doctor, Docker, changed hooks).
 * **Deploy** — step list with timings and streamed output; on failure the
-  diagnosis in plain words and Retry / Rollback / Skip / Abort.
-* **Hook approval** — when hooks changed since you approved them: the files
-  and a coloured diff against the approved copy; Approve runs
-  `muster hooks approve` (muster steps aside so it can ask for your password).
+  likely cause and what to try, and Retry / Rollback / Skip / Abort, plus
+  Fix when muster has a safe one and Explain with AI when you're signed in
+  to Fleet Cloud.
+* **Hook approval** — when hooks changed since you approved them: the files,
+  risky commands, and a coloured diff against the approved copy; Approve
+  asks first, then runs `muster hooks approve --yes`.
+* **Explain** — muster's offline explanation of the last failure.
+* **Assistant** — the Muster Assistant (`muster ask`): streamed answers, the
+  tools it reads, and actions that only run after you say yes.
 * **Service detail**, **Logs**, **Docker**, **Servers**, **History**,
   **Doctor**, **Settings** (global settings and every `muster.json` field,
   validated before saving; unknown keys and key order are kept).
