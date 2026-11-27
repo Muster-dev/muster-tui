@@ -316,6 +316,7 @@ func (d *deployScreen) beginRun(r *svcRun) {
 }
 
 func (d *deployScreen) startRun() tea.Cmd {
+	d.phase = phRunning // also after Retry from the recovery menu
 	if d.v07 {
 		return d.startStream()
 	}

@@ -105,6 +105,9 @@ func actionEventLines(ev engine.DeployEvent) []string {
 		if ev.Action == "restart" && ev.Restarted > 0 {
 			return []string{theme.GlyphOK + " Restarted " + plural(ev.Restarted, "service")}
 		}
+		if ev.Action == "" && ev.OK() > 0 { // a restart that redeployed
+			return []string{theme.GlyphOK + " Redeployed " + plural(ev.OK(), "service")}
+		}
 	}
 	return nil
 }

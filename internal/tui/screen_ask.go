@@ -215,7 +215,11 @@ func (s *askScreen) onEvent(ev engine.AskEvent) tea.Cmd {
 			s.entries = append(s.entries, askEntry{"note", t})
 		}
 	case "tool_running":
-		s.entries = append(s.entries, askEntry{"tool", firstNonEmpty(ev.Summary, "Running "+ev.Name+"…")})
+		txt := firstNonEmpty(ev.Summary, "Running "+ev.Name+"…")
+		if n := len(s.entries); n > 0 && s.entries[n-1].kind == "answer" && strings.HasSuffix(s.entries[n-1].text, ": "+txt) {
+			break // the approved action is already on screen
+		}
+		s.entries = append(s.entries, askEntry{"tool", txt})
 	case "tool_result":
 		line := strings.TrimSpace(firstLineOf(ev.Content))
 		if ev.IsError {
@@ -566,6 +570,10 @@ func (s *askScreen) View(w, h int) string {
 
 func (s *askScreen) Hint() string {
 	switch s.phase {
+	case askConsent:
+		return keyHint("y", "send redacted data", "n", "cancel — nothing is sent")
+	case askInput:
+		return keyHint("Enter", "ask", "Esc", "back")
 	case askApproval:
 		return theme.Warning.Render("The assistant wants to run an action") + theme.Dim.Render(" — ") + keyHint("y", "run it", "n", "decline")
 	case askRunning:

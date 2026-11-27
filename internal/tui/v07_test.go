@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,7 +93,7 @@ func TestOldCLIGetsUpgradeHint(t *testing.T) {
 	nm, _ := m.Update(TaskMsg{Msg: versionMsg{out: "v0.6.2"}})
 	m = nm.(Model)
 	_ = m.dispatch(TaskMsg{Msg: versionMsg{out: "v0.6.2"}}, fixedNow)
-	if !strings.Contains(m.env.State.Toast, "0.6.2 is older than 0.7.0") {
+	if !strings.Contains(m.env.State.Toast, "0.6.2 predates 0.7.0") {
 		t.Fatalf("toast=%q", m.env.State.Toast)
 	}
 }
@@ -431,5 +432,61 @@ func TestExplainWithAIOnlyWhenAvailable(t *testing.T) {
 	argv, _ := os.ReadFile(log)
 	if !strings.Contains(string(argv), "ask --json --yes --read-only -- Why did the api deploy fail, and how do I fix it?") {
 		t.Fatalf("argv:\n%s", argv)
+	}
+}
+
+func TestRecoveryTakesKeysAfterApprovalThenDeploy(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "approved")
+	d := deps07(t, "", "FAKE_STATE="+state, "FAKE_FAIL=api")
+	m := New(d)
+	m.env.State.HookChanges = hookChangesFrom(m.env.State.Project, mustHooks(t, d))
+	f := startFlowModel(t, m, 120, 34)
+	f.send(runLineMsg{"deploy api web"}).wait("Approve hooks")
+	f.key("a").wait("on this machine?")
+	f.key("enter").wait("Likely cause")
+	fm, _ := f.end()
+	if fm.focus != focusMain {
+		t.Fatal("focus should be on the recovery menu")
+	}
+}
+
+func mustHooks(t *testing.T, d Deps) engine.HooksStatus {
+	hs, err := d.Engine.WithDir(d.Project.Dir).HooksStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hs
+}
+
+func TestRetryRoutesTheRestOfTheStream(t *testing.T) {
+	m := New(deps07(t, "approved"))
+	d := newDeploy(m.env, []string{"api", "web"}, false, false, true)
+	d.started = fixedNow
+	m.env.Tasks.Cancel(0)
+	d.phase, d.cur = phFailed, 0
+	d.runs[0].state, d.runs[0].exitCode = rsFailed, 1
+	d.recover("retry")
+	defer m.env.Tasks.CancelAll()
+	if d.phase != phRunning {
+		t.Fatalf("retry should be running, phase=%v", d.phase)
+	}
+	ev := func(js string) { d.onEvent(engine.ParseDeployLine(js, false)) }
+	ev(`{"event":"start","service":"api","name":"API"}`)
+	ev(`{"event":"done","service":"api","status":"success"}`)
+	ev(`{"event":"start","service":"web","name":"Web"}`)
+	if d.runs[0].name != "API" || d.runs[0].state != rsOK || d.cur != 1 || d.runs[1].state != rsRunning {
+		t.Fatalf("api=%q/%v cur=%d web=%v", d.runs[0].name, d.runs[0].state, d.cur, d.runs[1].state)
+	}
+}
+
+func TestLegacyRetryShowsRunning(t *testing.T) {
+	m := New(baseDeps(t))
+	d := newDeploy(m.env, []string{"api"}, false, false, true)
+	d.phase = phFailed
+	d.runs[0].state = rsFailed
+	d.recover("retry")
+	defer m.env.Tasks.CancelAll()
+	if d.phase != phRunning || strings.Contains(d.View(80, 20), "[Retry]") {
+		t.Fatalf("phase=%v\n%s", d.phase, d.View(80, 20))
 	}
 }

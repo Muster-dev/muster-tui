@@ -252,7 +252,7 @@ func (m *Model) versionNotice() tea.Cmd {
 	if !c.Known || c.EngineAPI {
 		return nil
 	}
-	return m.setToast(lvlWarn, "muster "+c.Version.String()+" is older than "+engine.EngineAPIVersion+" — explain, ask, restart and hook approval here need it. Update: muster update")
+	return m.setToast(lvlWarn, "muster "+c.Version.String()+" predates "+engine.EngineAPIVersion+": explain, ask and quick approvals are off — run muster update")
 }
 
 func (m *Model) busy(label string) bool {
