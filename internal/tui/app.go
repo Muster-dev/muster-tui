@@ -49,6 +49,9 @@ func New(d Deps) Model {
 		d.Now = time.Now
 	}
 	env := &Env{Deps: d, Tasks: newTasks(d.Now), State: newState(d.Project, d.Cwd)}
+	if d.CLIVersion != "" {
+		env.State.Caps = engine.CapsFor(d.CLIVersion)
+	}
 	if d.Branch != "" {
 		env.State.Branch = d.Branch
 	}
@@ -86,6 +89,9 @@ func (m Model) Init() tea.Cmd {
 		cmds = append(cmds, m.env.loadStatus(), m.env.loadHistory())
 	}
 	cmds = append(cmds, m.env.loadDocker(), m.env.loadFleet(), tickRefresh())
+	if !m.env.State.Caps.Known {
+		cmds = append(cmds, m.env.loadVersion())
+	}
 	return tea.Batch(cmds...)
 }
 
@@ -239,6 +245,16 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 	return m.broadcast(msg)
 }
 
+// versionNotice tells users of an older CLI what they're missing (once,
+// at startup).
+func (m *Model) versionNotice() tea.Cmd {
+	c := m.env.State.Caps
+	if !c.Known || c.EngineAPI {
+		return nil
+	}
+	return m.setToast(lvlWarn, "muster "+c.Version.String()+" is older than "+engine.EngineAPIVersion+" — explain, ask, restart and hook approval here need it. Update: muster update")
+}
+
 func (m *Model) busy(label string) bool {
 	for _, t := range m.env.Tasks.List() {
 		if t.Label == label {
@@ -253,7 +269,20 @@ func (m *Model) dispatch(tm TaskMsg, now time.Time) tea.Cmd {
 	var cmds []tea.Cmd
 	if m.env.State.apply(tm.Msg, now) {
 		if sm, ok := tm.Msg.(statusMsg); ok && sm.err == nil && m.env.State.Project != nil {
-			m.env.State.HookChanges = m.env.State.Project.HookChanges()
+			if m.env.V07() {
+				// The CLI is the authority on approvals (~/.muster/trust).
+				if !m.busy("checking hooks") {
+					cmds = append(cmds, m.env.loadHooks())
+				}
+			} else {
+				m.env.State.HookChanges = m.env.State.Project.HookChanges()
+			}
+		}
+		if vm, ok := tm.Msg.(versionMsg); ok && vm.err == nil {
+			cmds = append(cmds, m.versionNotice())
+			if m.env.V07() {
+				cmds = append(cmds, m.env.loadHooks())
+			}
 		}
 		if _, ok := tm.Msg.(historyMsg); ok && m.env.State.Doctor == nil && !*m.doctorAsked && !m.env.NoAutoLoad {
 			*m.doctorAsked = true
@@ -375,6 +404,8 @@ func (m *Model) refresh(what string) tea.Cmd {
 		return e.loadFleet()
 	case "doctor":
 		return e.loadDoctor(false)
+	case "hooks":
+		return e.loadHooks()
 	}
 	return tea.Batch(e.loadStatus(), e.loadHistory(), e.loadDocker(), e.loadFleet())
 }

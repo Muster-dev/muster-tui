@@ -172,3 +172,17 @@ func TestHistory(t *testing.T) {
 		t.Fatal("expected no more matches")
 	}
 }
+
+func TestParseAskKeepsTheQuestion(t *testing.T) {
+	p, err := Parse("/ask why did the api deploy fail --dry-run?", Context{Services: []string{"api"}})
+	if err != nil || p.Cmd.Name != "ask" || len(p.Args) != 1 || p.Args[0] != "why did the api deploy fail --dry-run?" {
+		t.Fatalf("%v %+v", err, p)
+	}
+	p, err = Parse("ask", Context{})
+	if err != nil || len(p.Args) != 0 {
+		t.Fatalf("%v %+v", err, p)
+	}
+	if p, err := Parse("why api", Context{Services: []string{"api"}}); err != nil || p.Cmd.Name != "explain" || p.Args[0] != "api" {
+		t.Fatalf("%v %+v", err, p)
+	}
+}

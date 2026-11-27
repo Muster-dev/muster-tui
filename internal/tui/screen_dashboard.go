@@ -91,6 +91,9 @@ func (d *dashboard) View(w, h int) string {
 		if ss.Deploying {
 			glyph = theme.AccentFg.Render(d.env.Spin())
 			health = theme.AccentFg.Render("deploying")
+		} else if ss.LockedBy != nil {
+			glyph = theme.Warning.Render(theme.GlyphWarn)
+			health = theme.Warning.Render("deploying")
 		}
 		last := theme.Dim.Render("never deployed")
 		version := theme.Dim.Render("—")
@@ -142,6 +145,22 @@ func (d *dashboard) View(w, h int) string {
 func (d *dashboard) warnings() []string {
 	st := d.env.State
 	var out []string
+	if l := st.DeployLock; l != nil && !d.localDeploy() {
+		msg := "A deploy is running — started by " + l.Who()
+		if l.Started != "" {
+			msg += " at " + l.Started
+		}
+		if l.Services != "" {
+			msg += " (" + l.Services + ")"
+		}
+		out = append(out, msg)
+	} else if !d.localDeploy() {
+		for _, k := range st.ServiceKeys() {
+			if ss := st.Svc(k); ss.LockedBy != nil {
+				out = append(out, k+" is being deployed by "+ss.LockedBy.Who())
+			}
+		}
+	}
 	if n := len(st.HookChanges); n > 0 {
 		out = append(out, fmt.Sprintf("%s changed since approval — %s", plural(n, "hook file"), "approve"))
 	}
@@ -164,6 +183,16 @@ func (d *dashboard) warnings() []string {
 		out = append(out[:3], fmt.Sprintf("%d more — doctor", len(out)-3))
 	}
 	return out
+}
+
+// localDeploy reports whether this TUI is the one deploying (the lock is ours).
+func (d *dashboard) localDeploy() bool {
+	for _, k := range d.env.State.ServiceKeys() {
+		if d.env.State.Svc(k).Deploying {
+			return true
+		}
+	}
+	return false
 }
 
 func activityLine(ev engine.HistoryEvent, now time.Time, w int) string {

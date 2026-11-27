@@ -28,6 +28,15 @@ type serversScreen struct {
 	addErr  string
 	addTask int
 	want    string
+	// fleet status --json results (U), by machine name
+	health    map[string]fleet.MachineStatus
+	healthID  int
+	healthErr string
+}
+
+type fleetStatusMsg struct {
+	st  []fleet.MachineStatus
+	err error
 }
 
 type sshTestMsg struct {
@@ -37,7 +46,7 @@ type sshTestMsg struct {
 }
 
 func newServers(env *Env) *serversScreen {
-	return &serversScreen{env: env, results: map[string]*testResult{}, tasks: map[int]string{}}
+	return &serversScreen{env: env, results: map[string]*testResult{}, tasks: map[int]string{}, health: map[string]fleet.MachineStatus{}}
 }
 
 func (s *serversScreen) Key() string     { return "servers" }
@@ -107,6 +116,20 @@ func (s *serversScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 			s.want = ""
 		}
 	case TaskMsg:
+		if m.ID == s.healthID && s.healthID != 0 {
+			if in, ok := m.Msg.(fleetStatusMsg); ok {
+				s.healthErr = ""
+				if in.err != nil {
+					s.healthErr = in.err.Error()
+					return s, nil
+				}
+				for _, ms := range in.st {
+					s.health[ms.Machine] = ms
+					delete(s.results, ms.Machine) // the newer answer wins
+				}
+			}
+			return s, nil
+		}
 		if m.ID == s.addTask && s.addTask != 0 {
 			switch in := m.Msg.(type) {
 			case logEndMsg:
@@ -135,6 +158,21 @@ func (s *serversScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 		delete(s.tasks, m.ID)
 	}
 	return s, nil
+}
+
+// checkHealth runs `muster fleet status --json` for every machine and shows
+// the answers in the table.
+func (s *serversScreen) checkHealth() tea.Cmd {
+	eng := s.env.Eng()
+	if eng == nil || s.env.Tasks.Running(s.healthID) {
+		return nil
+	}
+	id, cmd := s.env.Tasks.Run("checking fleet health", s.Key(), false, func(ctx context.Context) tea.Msg {
+		st, err := fleet.Status(ctx, eng, "")
+		return fleetStatusMsg{st, err}
+	})
+	s.healthID = id
+	return cmd
 }
 
 func (s *serversScreen) submitAdd() tea.Cmd {
@@ -250,6 +288,8 @@ func (s *serversScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 		}
 	case "u":
 		return s, runLine(strings.TrimSpace("fleet status " + target)), true
+	case "U":
+		return s, s.checkHealth(), true
 	case "b":
 		if target != "" {
 			t := target
@@ -316,6 +356,15 @@ func (s *serversScreen) View(w, h int) string {
 			m := it.machine
 			status := theme.Dim.Render("untested · t")
 			glyph := theme.Dim.Render(theme.GlyphUnknown)
+			if m.Paired != nil && !*m.Paired && m.Mode == "muster" {
+				status = theme.Warning.Render("not paired") + theme.Dim.Render(" · muster fleet pair "+m.Name)
+			}
+			if hs, ok := s.health[m.Name]; ok {
+				status, glyph = fleetHealthText(hs)
+			}
+			if s.env.Tasks.Running(s.healthID) {
+				status = theme.AccentFg.Render(s.env.Spin() + " checking")
+			}
 			if r := s.results[m.Name]; r != nil {
 				switch {
 				case r.running:
@@ -336,11 +385,32 @@ func (s *serversScreen) View(w, h int) string {
 		g := it.group
 		lines = append(lines, trunc(cur+fit(g.Name, nameW)+theme.Dim.Render(strings.Join(g.Machines, ", ")), w))
 	}
+	if s.healthErr != "" {
+		lines = append(lines, "", theme.Err.Render(theme.GlyphFail+" ")+trunc("fleet status: "+s.healthErr, w-2))
+	}
 	for len(lines) < h-2 {
 		lines = append(lines, "")
 	}
-	lines = append(lines, rule(w), keyHint("t", "test", "Enter", "ssh", "d", "deploy", "u", "status", "b", "rollback", "a", "add"))
+	lines = append(lines, rule(w), keyHint("t", "test", "U", "health", "Enter", "ssh", "d", "deploy", "u", "status", "b", "rollback", "a", "add"))
 	return block(lines, w, h)
+}
+
+// fleetHealthText renders one machine's `fleet status --json` answer.
+func fleetHealthText(hs fleet.MachineStatus) (string, string) {
+	if !hs.Reachable {
+		return theme.Err.Render(firstNonEmpty(hs.Error, "unreachable")), theme.Err.Render(theme.GlyphUnhealthy)
+	}
+	if hs.Healthy != nil && hs.Total != nil && *hs.Total > 0 {
+		txt := fmt.Sprintf("%d/%d healthy", *hs.Healthy, *hs.Total)
+		if *hs.Healthy < *hs.Total {
+			return theme.Warning.Render(txt), theme.Warning.Render(theme.GlyphWarn)
+		}
+		return theme.OK.Render(txt), theme.OK.Render(theme.GlyphHealthy)
+	}
+	if hs.Error != "" {
+		return theme.Warning.Render("reachable · " + hs.Error), theme.OK.Render(theme.GlyphHealthy)
+	}
+	return theme.OK.Render("reachable"), theme.OK.Render(theme.GlyphHealthy)
 }
 
 func (s *serversScreen) Hint() string {
@@ -351,5 +421,5 @@ func (s *serversScreen) Hint() string {
 }
 
 func (s *serversScreen) Keys() []KeyHelp {
-	return []KeyHelp{{"j / k", "select"}, {"t / T", "test selected / all"}, {"Enter / s", "ssh (muster steps aside)"}, {"d", "fleet deploy"}, {"u", "fleet status"}, {"b", "fleet rollback"}, {"a", "add machine"}, {"c", "cloud login / status"}, {"R", "refresh"}}
+	return []KeyHelp{{"j / k", "select"}, {"t / T", "test selected / all"}, {"U", "fleet health (muster fleet status)"}, {"Enter / s", "ssh (muster steps aside)"}, {"d", "fleet deploy"}, {"u", "fleet status"}, {"b", "fleet rollback"}, {"a", "add machine"}, {"c", "cloud login / status"}, {"R", "refresh"}}
 }

@@ -61,6 +61,8 @@ func (s *serviceScreen) View(w, h int) string {
 	health := healthGlyph(ss.Shown()) + " " + healthWord(ss.Shown())
 	if ss.Deploying {
 		health = theme.AccentFg.Render(s.env.Spin() + " deploying")
+	} else if ss.LockedBy != nil {
+		health = theme.Warning.Render(theme.GlyphWarn + " being deployed by " + ss.LockedBy.Who())
 	} else if !ss.Since.IsZero() && (ss.Shown() == "healthy" || ss.Shown() == "unhealthy") {
 		health += theme.Dim.Render(" since " + ago(ss.Since, now))
 	}
@@ -71,13 +73,51 @@ func (s *serviceScreen) View(w, h int) string {
 	add(spread(title, health, w), "")
 
 	kv := func(k, v string) { add(theme.Dim.Render(fit(k, 14)) + v) }
-	kv("Stack", firstNonEmpty(p.Stack(s.svc), "unknown"))
+	kv("Stack", firstNonEmpty(ss.Stack, p.Stack(s.svc), "unknown"))
+	if ss.LockedBy != nil {
+		l := ss.LockedBy
+		v := "now, by " + l.Who()
+		if l.Source != "" && l.Source != "local" {
+			v += " (" + l.Source + ")"
+		}
+		if l.Started != "" {
+			v += theme.Dim.Render(" since " + l.Started)
+		}
+		if l.PID > 0 {
+			v += theme.Dim.Render(fmt.Sprintf(" · pid %d", l.PID))
+		}
+		kv("Deploying", theme.Warning.Render(v))
+	}
+	if ld := ss.CLILast; ld != nil {
+		v := theme.OK.Render(firstNonEmpty(ld.Status, "ok"))
+		if ld.Status != "" && ld.Status != "ok" {
+			v = theme.Err.Render(ld.Status)
+		}
+		v += theme.Dim.Render(" " + ld.TS)
+		if c := shortSHA(ld.Commit); c != "" {
+			v += theme.Dim.Render(" · ") + c
+		}
+		if ld.Source != "" && ld.Source != "local" {
+			v += theme.Dim.Render(" · from " + ld.Source)
+		}
+		kv("Last deploy", v)
+	}
+	if r := ss.Replicas; r != nil {
+		v := fmt.Sprintf("%d/%d ready", r.Ready, r.Desired)
+		if r.Ready < r.Desired {
+			v = theme.Warning.Render(v)
+		}
+		kv("Replicas", v)
+	}
 	hc := cfg.HealthLabel()
 	if cfg.Health.Enabled && cfg.Health.Type == "http" && cfg.Health.Endpoint != "" {
 		hc += " " + cfg.Health.Endpoint
 	}
 	if cfg.Health.Enabled && cfg.Health.Timeout > 0 {
 		hc += theme.Dim.Render(fmt.Sprintf("  timeout %ds", cfg.Health.Timeout))
+	}
+	if ss.Target != "" && cfg.Health.Enabled {
+		hc += theme.Dim.Render("  → " + ss.Target)
 	}
 	kv("Health check", hc)
 	kv("Credentials", cfg.CredsMode)

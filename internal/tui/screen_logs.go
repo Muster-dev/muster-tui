@@ -16,6 +16,9 @@ import (
 
 const maxLogLines = 10000
 
+// logsTail is how many earlier lines the logs view starts with (muster ≥ 0.7).
+const logsTail = 200
+
 type lineOpener func(ctx context.Context) (<-chan string, func() error, error)
 
 // logsScreen shows a streamed command's output: service logs, container
@@ -71,7 +74,16 @@ func newServiceLogs(env *Env, svc string) *logsScreen {
 			containerID = c.ID
 		}
 	}
+	v07 := env.V07()
 	return newLogsScreen(env, "logs:"+svc, "Logs · "+svc, true, false, func(ctx context.Context) (<-chan string, func() error, error) {
+		if eng != nil && v07 {
+			// Last lines from the stack's own log source, then follow.
+			s, err := eng.LogsStream(ctx, svc, logsTail, true)
+			if err != nil {
+				return nil, nil, err
+			}
+			return streamLines(s, logEventLines)
+		}
 		if eng != nil {
 			return eng.Logs(ctx, svc)
 		}

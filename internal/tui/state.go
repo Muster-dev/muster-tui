@@ -36,6 +36,9 @@ type Deps struct {
 	Branch string
 	// NoAutoLoad disables startup loads and timers (tests feed data).
 	NoAutoLoad bool
+	// CLIVersion presets `muster --version` (tests); otherwise it's asked
+	// for at startup.
+	CLIVersion string
 }
 
 // Env is shared by the app and every screen. Screens may mutate State from
@@ -79,6 +82,14 @@ type SvcState struct {
 	// NeverDeployed is true once history has loaded and has no deploy or
 	// rollback for this service.
 	NeverDeployed bool
+
+	// From status --json on muster ≥ 0.7 (zero otherwise).
+	Stack    string
+	Target   string
+	Remote   string
+	LockedBy *engine.Lock // a deploy of this service is running somewhere
+	Replicas *engine.Replicas
+	CLILast  *engine.LastDeploy
 }
 
 // Shown is the health to display. A failing check on a service that has
@@ -116,6 +127,16 @@ type State struct {
 
 	Doctor      *engine.DoctorResult
 	HookChanges []config.HookChange
+	// Hooks is the CLI's own view (muster ≥ 0.7, hooks status --json).
+	Hooks *engine.HooksStatus
+
+	// Caps: what the installed muster CLI supports (from --version).
+	Caps engine.Caps
+	// DeployLock: a project-wide deploy/rollback holds the lock (≥ 0.7).
+	DeployLock *engine.Lock
+	// AssistantUnavailable is set when `muster ask` said we're not signed
+	// in or it's turned off, so "Explain with AI" stays hidden.
+	AssistantUnavailable string
 
 	Toast      string
 	ToastLevel int
@@ -216,6 +237,14 @@ type (
 		err error
 		fix bool
 	}
+	versionMsg struct {
+		out string
+		err error
+	}
+	hooksMsg struct {
+		hs  engine.HooksStatus
+		err error
+	}
 	tokenMsg struct {
 		token    string
 		err      error
@@ -247,7 +276,10 @@ func (s *State) apply(msg tea.Msg, now time.Time) bool {
 				st.Since = now
 			}
 			st.Health, st.Detail, st.CheckedAt = h, v.Detail, now
+			st.Stack, st.Target, st.Remote = v.Stack, v.Target, v.Remote
+			st.LockedBy, st.Replicas, st.CLILast = v.LockedBy, v.Replicas, v.LastDeploy
 		}
+		s.DeployLock = m.r.DeployLock
 	case historyMsg:
 		s.HistoryLoaded = true
 		s.HistoryErr = m.err
@@ -292,10 +324,40 @@ func (s *State) apply(msg tea.Msg, now time.Time) bool {
 			r := m.r
 			s.Doctor = &r
 		}
+	case versionMsg:
+		if m.err == nil {
+			s.Caps = engine.CapsFor(m.out)
+		}
+	case hooksMsg:
+		if m.err == nil {
+			hs := m.hs
+			s.Hooks = &hs
+			s.HookChanges = hookChangesFrom(s.Project, hs)
+		}
 	default:
 		return false
 	}
 	return true
+}
+
+// hookChangesFrom turns `hooks status --json` into the pending changes the
+// banner, approval screen and service screen show.
+func hookChangesFrom(p *config.Project, hs engine.HooksStatus) []config.HookChange {
+	if !hs.SecurityEnabled {
+		return nil
+	}
+	var out []config.HookChange
+	for _, f := range hs.All() {
+		if !f.Pending() {
+			continue
+		}
+		path := f.Path
+		if p != nil && path != "" && !filepath.IsAbs(path) {
+			path = filepath.Join(p.Dir, path)
+		}
+		out = append(out, config.HookChange{Key: f.Key, Path: path, Approved: f.ApprovedCopy, Kind: f.State, Dangerous: f.Dangerous})
+	}
+	return out
 }
 
 // readEventsLog parses .muster/logs/deploy-events.log directly (used when
@@ -402,6 +464,34 @@ func (e *Env) loadFleet() tea.Cmd {
 	_, cmd := e.Tasks.Run("loading fleet", "", false, func(ctx context.Context) tea.Msg {
 		inv, err := fleet.List(ctx, eng, dir)
 		return fleetMsg{inv, err}
+	})
+	return cmd
+}
+
+// V07 reports whether the CLI has the muster 0.7 engine API.
+func (e *Env) V07() bool { return e.State.Caps.EngineAPI }
+
+func (e *Env) loadVersion() tea.Cmd {
+	eng := e.Engine
+	if eng == nil {
+		return nil
+	}
+	_, cmd := e.Tasks.Run("checking muster version", "", false, func(ctx context.Context) tea.Msg {
+		out, err := eng.Version(ctx)
+		return versionMsg{out, err}
+	})
+	return cmd
+}
+
+// loadHooks asks the CLI which hooks need approval (muster ≥ 0.7).
+func (e *Env) loadHooks() tea.Cmd {
+	eng := e.Eng()
+	if eng == nil || e.State.Project == nil || !e.V07() {
+		return nil
+	}
+	_, cmd := e.Tasks.Run("checking hooks", "", false, func(ctx context.Context) tea.Msg {
+		hs, err := eng.HooksStatus(ctx)
+		return hooksMsg{hs, err}
 	})
 	return cmd
 }

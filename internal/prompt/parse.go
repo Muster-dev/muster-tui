@@ -70,6 +70,14 @@ func Parse(input string, ctx Context) (Parsed, error) {
 		return Parsed{}, unknownCommand(words, flags, ctx)
 	}
 	p := Parsed{Cmd: cmd, Args: words[n:], Flags: flags, Input: input}
+	if cmd.Name == "ask" {
+		// A question is free text: keep every word and dash as typed.
+		p.Args, p.Flags = nil, map[string]bool{}
+		if f := strings.Fields(line); len(f) > 1 {
+			p.Args = []string{strings.TrimSpace(strings.TrimPrefix(line, f[0]))}
+		}
+		return p, nil
+	}
 	for f := range flags {
 		if !containsStr(cmd.Flags, f) {
 			return p, &Error{Msg: fmt.Sprintf("`%s` doesn't take %s", cmd.Name, f)}

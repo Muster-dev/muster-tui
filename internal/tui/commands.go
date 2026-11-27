@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/Muster-dev/muster-tui/internal/engine"
 	"github.com/Muster-dev/muster-tui/internal/fleet"
 	"github.com/Muster-dev/muster-tui/internal/prompt"
 	tea "github.com/charmbracelet/bubbletea"
@@ -70,6 +71,19 @@ func (m *Model) needEngine() tea.Cmd {
 		msg = m.env.EngineErr.Error()
 	}
 	return m.setToast(lvlErr, msg)
+}
+
+// needV07 refuses a feature the installed muster CLI is too old for.
+func (m *Model) needV07(feature string) tea.Cmd {
+	c := m.env.State.Caps
+	if c.EngineAPI || m.env.Engine == nil {
+		return nil
+	}
+	have := "an older muster"
+	if c.Known {
+		have = "muster " + c.Version.String()
+	}
+	return m.setToast(lvlWarn, "`"+feature+"` needs muster "+engine.EngineAPIVersion+" or newer (you have "+have+") — update with: muster update")
 }
 
 // pickService resolves the single service a command acts on.
@@ -155,14 +169,11 @@ func (m *Model) run(p prompt.Parsed) tea.Cmd {
 			m.screens["deploy"] = ns
 			return cmd
 		}
-		eng := e.Eng()
 		m.overlay = newConfirm(confirmMsg{
 			title: "Roll back " + svc + "?",
 			body:  []string{"Runs .muster/hooks/" + svc + "/rollback.sh to restore the previous version."},
 			yes:   "Roll back",
-			onYes: nav(newOutput(e, "rollback:"+svc, "Rollback · "+svc, true, func(ctx context.Context) (<-chan string, func() error, error) {
-				return eng.Rollback(ctx, svc)
-			})),
+			onYes: nav(rollbackOutput(e, svc)),
 		})
 		return nil
 	case "restart":
@@ -173,7 +184,26 @@ func (m *Model) run(p prompt.Parsed) tea.Cmd {
 		if svc == "" {
 			return c
 		}
+		if e.V07() && e.Engine != nil {
+			m.overlay = newConfirm(confirmMsg{
+				title: "Restart " + svc + "?",
+				body: []string{"Runs muster restart " + svc + ": its restart hook, or kubectl rollout restart / docker compose restart / docker restart for its stack.",
+					"Stacks without a restart are redeployed instead (no rollback)."},
+				yes:   "Restart",
+				onYes: nav(restartOutput(e, svc)),
+			})
+			return nil
+		}
 		return m.restart(svc)
+	case "explain":
+		if c := firstCmd(m.needProject(), m.needEngine(), m.needV07("explain")); c != nil {
+			return c
+		}
+		svc := ""
+		if len(p.Args) > 0 {
+			svc = p.Args[0]
+		}
+		return m.open(newExplainScreen(e, svc))
 	case "logs":
 		if c := m.needProject(); c != nil {
 			return c

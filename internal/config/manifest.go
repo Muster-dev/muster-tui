@@ -18,6 +18,8 @@ type HookChange struct {
 	Path     string // current file
 	Approved string // approved copy for diffs ("" when none)
 	Kind     string // "changed", "new", "removed"
+	// Dangerous lists risky patterns the CLI found ("line 4: …", ≥ 0.7).
+	Dangerous []string
 }
 
 // Label is a display name ("api/deploy.sh", "muster.json").
