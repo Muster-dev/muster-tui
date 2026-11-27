@@ -1,0 +1,196 @@
+#!/bin/sh
+# Fake muster 0.7 CLI for tests. Replays output captured from muster v0.7.0
+# (docs/ENGINE-API.md). FAKE_SCENARIO selects behaviour; FAKE_LOG records
+# argv; FAKE_STDIN_LOG records what `ask --json` reads on stdin.
+[ -n "$FAKE_LOG" ] && echo "$*" >> "$FAKE_LOG"
+if [ "$1" != "--version" ] && [ "$1" != "auth" ] && [ "$1" != "ask" ] && [ "$1" != "explain" ] && [ -z "$MUSTER_TOKEN" ]; then
+  case " $* " in *" --json "*)
+    echo '{"error":"auth_required","message":"MUSTER_TOKEN not set"}' >&2; exit 1 ;;
+  esac
+fi
+P=/p
+case "$1" in
+--version) echo "v0.7.0" ;;
+status)
+  cat <<'EOF'
+{"project":"acme-store","checked_at":"2026-11-26T13:40:05-05:00","deploying":true,"deploy_lock":{"user":"sam","pid":4242,"started":"2026-11-26 13:39:00","services":"api web"},"services":{"api":{"name":"API Server","status":"healthy","health_type":"http","stack":"k8s","health":{"type":"http","port":8080,"endpoint":"/health","command":null,"timeout":10,"enabled":true},"target":"http://localhost:8080/health","remote":null,"last_deploy":{"ts":"2026-11-26 13:38:00","status":"ok","commit":"4f2a9c1","source":"local"},"locked_by":{"user":"sam","host":"ci-runner-3","source":"fleet","pid":4242,"started":"2026-11-26 13:39:00"},"deploying":true,"replicas":{"ready":2,"desired":3}},"web":{"name":"Web","status":"unhealthy","health_type":"http","stack":"compose","health":{"type":"http","port":3000,"endpoint":"/","command":null,"timeout":10,"enabled":true},"target":"http://localhost:3000/","remote":"deploy@10.0.0.5","last_deploy":{"ts":"2026-11-26 13:12:45","status":"failed","commit":"4f2a9c1","source":"local"},"locked_by":null,"deploying":false,"replicas":null},"redis":{"name":"Redis","status":"disabled","health_type":"","detail":"health check disabled","stack":"compose","health":{"type":null,"port":null,"endpoint":null,"command":null,"timeout":null,"enabled":false},"target":null,"remote":null,"last_deploy":null,"locked_by":null,"deploying":false,"replicas":null},"worker":{"name":"Worker","status":"no_health_check","health_type":"","detail":"no health hook","stack":"bare","target":null,"remote":null,"last_deploy":null,"locked_by":null,"deploying":false,"replicas":null}}}
+EOF
+  ;;
+history)
+  echo '[{"timestamp":"2026-11-26 13:12:45","service":"web","action":"deploy","status":"failed","commit":"4f2a9c1","source":"local"},{"timestamp":"2026-11-26 13:38:00","service":"api","action":"deploy","status":"ok","commit":"4f2a9c1","source":"local"}]'
+  ;;
+doctor)
+  echo '{"pass":18,"warnings":1,"failures":0,"fixable":0,"checks":[{"name":"jq available","status":"pass","category":"Platform & Tools","fixable":false,"fix":null}]}'
+  ;;
+fleet)
+  case "$2" in
+  list) echo '{"source":"fleet_dirs","machines":[{"name":"edge-1","host":"edge.example","user":"ops","port":22,"transport":"cloud","mode":"push","hook_mode":"manual","project_dir":"","identity_file":null,"fleet":"default","group":"prod","paired":true},{"name":"prod-1","host":"10.0.0.5","user":"deploy","port":2222,"transport":"ssh","mode":"muster","hook_mode":"manual","project_dir":"/opt/acme","identity_file":null,"fleet":"default","group":"prod","paired":false}],"groups":[{"name":"prod","fleet":"default","machines":["edge-1","prod-1"]}]}' ;;
+  status) echo '{"status":[{"machine":"edge-1","host":"edge.example","user":"ops","port":22,"transport":"cloud","mode":"push","reachable":false,"services":null,"healthy":null,"total":null,"error":"unreachable"},{"machine":"prod-1","host":"10.0.0.5","user":"deploy","port":2222,"transport":"ssh","mode":"muster","reachable":true,"healthy":2,"total":3,"error":null,"services":[{"service":"api","name":"API Server","status":"healthy","health_type":"http"},{"service":"web","name":"Web","status":"unhealthy","health_type":"http"},{"service":"redis","name":"Redis","status":"healthy","health_type":"tcp"}]}]}' ;;
+  esac
+  ;;
+hooks)
+  case "$2" in
+  status)
+    if [ "$FAKE_SCENARIO" = "approved" ] || [ -f "${FAKE_STATE:-/nonexistent}" ]; then
+      echo '{"approved":true,"security_enabled":true,"signature":"valid","files":[{"service":"api","file":"deploy.sh","key":"api/deploy.sh","path":".muster/hooks/api/deploy.sh","state":"approved","approved_at":"2026-11-26T18:02:11Z","approved_copy":null,"dangerous":[]}],"config":{"service":null,"file":"muster.json","key":"_config/muster.json","path":"muster.json","state":"approved","approved_at":"2026-11-26T18:02:11Z","approved_copy":null,"dangerous":[]},"env":null,"pending":[]}'
+    else
+      cat <<'EOF'
+{"approved":false,"security_enabled":true,"trust_dir":"/h/.muster/trust/362f","manifest":"/h/.muster/trust/362f/hooks.manifest","signature":"valid","files":[{"service":"api","file":"deploy.sh","key":"api/deploy.sh","path":".muster/hooks/api/deploy.sh","state":"changed","approved_at":"2026-11-26T18:02:11Z","approved_copy":"/h/.muster/trust/362f/approved/api/deploy.sh","dangerous":[]},{"service":"api","file":"health.sh","key":"api/health.sh","path":".muster/hooks/api/health.sh","state":"approved","approved_at":"2026-11-26T18:02:11Z","approved_copy":"/h/.muster/trust/362f/approved/api/health.sh","dangerous":[]},{"service":"web","file":"deploy.sh","key":"web/deploy.sh","path":".muster/hooks/web/deploy.sh","state":"new","approved_at":null,"approved_copy":null,"dangerous":["line 4: Remote code execution (curl pipe bash)"]},{"service":"web","file":"old.sh","key":"web/old.sh","path":".muster/hooks/web/old.sh","state":"missing","approved_at":"2026-11-26T18:02:11Z","approved_copy":null,"dangerous":[]}],"config":{"service":null,"file":"muster.json","key":"_config/muster.json","path":"muster.json","state":"changed","approved_at":"2026-11-26T18:02:11Z","approved_copy":null,"dangerous":[]},"env":null,"pending":["api/deploy.sh","web/deploy.sh","_config/muster.json"]}
+EOF
+    fi
+    ;;
+  approve)
+    case " $* " in *" --yes "*) ;; *) echo '{"error":"confirmation_required","message":"Pass --yes to approve without a prompt"}' >&2; exit 1 ;; esac
+    if [ "$FAKE_SCENARIO" = "dangerous" ]; then
+      echo '{"error":"dangerous_hooks","message":"1 hook contains a dangerous command","files":[{"key":"web/deploy.sh","issue":"line 4: Remote code execution (curl pipe bash)"}]}' >&2
+      exit 1
+    fi
+    [ -n "$FAKE_STATE" ] && : > "$FAKE_STATE"
+    echo '{"ok":true,"count":2,"approved":[{"key":"api/deploy.sh","was":"changed"},{"key":"_config/muster.json","was":"changed"}],"services":["api"],"trust_dir":"/h/.muster/trust/362f"}'
+    ;;
+  esac
+  ;;
+explain)
+  svc="$2"; case "$svc" in --*|"") svc=api ;; esac
+  case " $* " in
+  *" --fix "*)
+    echo ""
+    echo "  Explaining $svc — deploy failed 1s ago (exit 124)"
+    echo "  Running: edits muster.json"
+    echo "  * Set $svc deploy_timeout to 4s in muster.json"
+    echo "  * Fix applied: Raise $svc deploy_timeout to 4s"
+    ;;
+  *)
+    if [ "$FAKE_SCENARIO" = "nomatch" ]; then
+      echo "{\"service\":\"$svc\",\"action\":\"deploy\",\"exit_code\":1,\"log\":\"$P/.muster/logs/$svc-deploy.log\",\"when\":1795740081,\"matched\":false,\"hint\":null,\"hints\":[]}"
+    else
+      echo "{\"service\":\"$svc\",\"action\":\"deploy\",\"exit_code\":124,\"log\":\"$P/.muster/logs/$svc-deploy.log\",\"when\":1795740093,\"matched\":true,\"hint\":{\"id\":\"deploy_timeout\",\"title\":\"The $svc hook ran longer than its 2s deploy_timeout and was stopped (exit 124).\",\"try\":\"If the deploy is just slow, raise deploy_timeout for this service in muster.json.\",\"fix\":{\"label\":\"Raise $svc deploy_timeout to 4s\",\"command\":\"_hints_fix_timeout $svc 4\",\"internal\":true},\"docs\":\"https://getmuster.dev/docs/troubleshooting#deploy-timeout\",\"line\":\"\"},\"hints\":[]}"
+    fi
+    ;;
+  esac
+  ;;
+logs)
+  svc="$2"
+  echo "{\"event\":\"log\",\"service\":\"$svc\",\"source\":\"hook\",\"line\":\"$svc log line 29\"}"
+  printf '{"event":"log","service":"%s","source":"hook","line":"ERROR\\tsomething broke"}\n' "$svc"
+  case " $* " in *" --follow "*) sleep "${FAKE_FOLLOW:-30}" ;; esac
+  echo "{\"event\":\"end\",\"service\":\"$svc\",\"source\":\"hook\",\"exit_code\":0}"
+  ;;
+rollback)
+  svc="$2"
+  echo "{\"event\":\"start\",\"service\":\"$svc\",\"name\":\"$svc\",\"action\":\"rollback\",\"index\":1,\"total\":1,\"log_file\":\"$P/.muster/logs/$svc-rollback.log\"}"
+  echo "{\"event\":\"log\",\"service\":\"$svc\",\"line\":\"restoring previous $svc\"}"
+  echo "{\"event\":\"log\",\"service\":\"$svc\",\"line\":\"$svc rolled back\"}"
+  echo "{\"event\":\"done\",\"service\":\"$svc\",\"status\":\"success\"}"
+  echo "{\"event\":\"health\",\"service\":\"$svc\",\"status\":\"healthy\"}"
+  echo "{\"event\":\"summary\",\"action\":\"rollback\",\"total\":1,\"rolled_back\":1,\"failed\":0,\"duration\":0,\"exit_code\":0,\"services\":[{\"service\":\"$svc\",\"name\":\"$svc\",\"result\":\"rolled back\",\"duration\":0,\"health\":\"healthy\",\"log_file\":\"$P/.muster/logs/$svc-rollback.log\"}]}"
+  ;;
+restart)
+  svc="$2"
+  if [ "$FAKE_SCENARIO" = "redeploy" ]; then
+    echo "{\"event\":\"restart\",\"service\":\"$svc\",\"method\":\"redeploy\",\"stack\":\"bare\",\"message\":\"No restart hook and no built-in restart for bare services — redeploying $svc instead (no rollback)\"}"
+    echo "{\"event\":\"start\",\"service\":\"$svc\",\"name\":\"$svc\",\"index\":1,\"total\":1,\"log_file\":\"$P/.muster/logs/$svc-deploy.log\"}"
+    echo "{\"event\":\"log\",\"service\":\"$svc\",\"line\":\"$svc up\"}"
+    echo "{\"event\":\"done\",\"service\":\"$svc\",\"status\":\"success\"}"
+    echo "{\"event\":\"summary\",\"total\":1,\"deployed\":1,\"failed\":0,\"skipped\":0,\"not_run\":0,\"rolled_back\":0,\"duration\":1,\"exit_code\":0,\"stopped_early\":false,\"services\":[{\"service\":\"$svc\",\"name\":\"$svc\",\"result\":\"deployed\",\"duration\":1,\"health\":\"disabled\",\"log_file\":\"\"}]}"
+  else
+    echo "{\"event\":\"start\",\"service\":\"$svc\",\"name\":\"$svc\",\"action\":\"restart\",\"method\":\"compose\",\"stack\":\"compose\",\"index\":1,\"total\":1,\"log_file\":\"$P/.muster/logs/$svc-restart.log\"}"
+    echo "{\"event\":\"log\",\"service\":\"$svc\",\"line\":\"Container acme-$svc-1  Restarting\"}"
+    echo "{\"event\":\"done\",\"service\":\"$svc\",\"status\":\"success\"}"
+    echo "{\"event\":\"health\",\"service\":\"$svc\",\"status\":\"healthy\"}"
+    echo "{\"event\":\"summary\",\"action\":\"restart\",\"total\":1,\"restarted\":1,\"failed\":0,\"duration\":2,\"exit_code\":0,\"services\":[{\"service\":\"$svc\",\"name\":\"$svc\",\"result\":\"restarted\",\"duration\":2,\"health\":\"healthy\",\"log_file\":\"\"}]}"
+  fi
+  ;;
+deploy)
+  shift
+  dry=false; from=""; prev=""; svcs=""
+  for a in "$@"; do
+    if [ "$prev" = "--from" ]; then from="$a"; prev=""; continue; fi
+    case "$a" in --dry-run) dry=true ;; --from) prev=--from ;; --*) ;; *) svcs="$svcs $a" ;; esac
+  done
+  [ -z "$svcs" ] && svcs="api web"
+  if $dry; then
+    i=0; for s in $svcs; do i=$((i+1)); echo "{\"event\":\"dry_run\",\"service\":\"$s\",\"name\":\"$s\",\"index\":$i,\"total\":2,\"hook\":\"$P/.muster/hooks/$s/deploy.sh\",\"hook_lines\":12}"; done
+    echo '{"event":"complete","total":2,"dry_run":true}'
+    exit 0
+  fi
+  if [ "$FAKE_SCENARIO" = "unapproved" ]; then
+    echo '{"event":"error","reason":"hooks_not_approved","message":"Hooks changed or not approved on this machine (muster hooks status --json)","files":[{"key":"api/deploy.sh","state":"changed"}],"services":["api","web"]}'
+    echo '{"event":"summary","total":2,"deployed":0,"failed":0,"skipped":0,"not_run":2,"rolled_back":0,"duration":0,"exit_code":1,"stopped_early":false,"services":[]}'
+    exit 1
+  fi
+  started=false; [ -z "$from" ] && started=true
+  ok=0; n=0
+  for s in $svcs; do
+    [ "$s" = "$from" ] && started=true
+    $started || continue
+    n=$((n+1))
+    echo "{\"event\":\"start\",\"service\":\"$s\",\"name\":\"$s\",\"index\":$n,\"total\":2,\"log_file\":\"$P/.muster/logs/$s-deploy.log\"}"
+    echo "{\"event\":\"log\",\"service\":\"$s\",\"line\":\"Building $s...\"}"
+    if [ "$s" = "${FAKE_FAIL:-}" ]; then
+      echo "{\"event\":\"done\",\"service\":\"$s\",\"status\":\"timeout\",\"timeout\":2}"
+      if [ "$FAKE_SCENARIO" != "nohint" ]; then
+        echo "{\"event\":\"hint\",\"service\":\"$s\",\"hint\":{\"id\":\"deploy_timeout\",\"title\":\"The $s hook ran longer than its 2s deploy_timeout and was stopped (exit 124).\",\"try\":\"If the deploy is just slow, raise deploy_timeout for this service in muster.json.\",\"fix\":{\"label\":\"Raise $s deploy_timeout to 4s\",\"command\":\"_hints_fix_timeout $s 4\",\"internal\":true},\"docs\":\"https://getmuster.dev/docs/troubleshooting#deploy-timeout\",\"line\":\"\"}}"
+      fi
+      case " $* " in *" --stop-on-failure "*)
+        echo "{\"event\":\"stopped\",\"reason\":\"failure\",\"after\":\"$s\",\"remaining\":1}"
+        echo '{"event":"complete","total":2,"dry_run":false}'
+        echo "{\"event\":\"summary\",\"total\":2,\"deployed\":$ok,\"failed\":1,\"skipped\":0,\"not_run\":1,\"rolled_back\":0,\"duration\":2,\"exit_code\":1,\"stopped_early\":true,\"services\":[]}"
+        exit 1 ;;
+      esac
+      continue
+    fi
+    echo "{\"event\":\"done\",\"service\":\"$s\",\"status\":\"success\"}"
+    echo "{\"event\":\"health\",\"service\":\"$s\",\"status\":\"checking\"}"
+    echo "{\"event\":\"health\",\"service\":\"$s\",\"status\":\"healthy\"}"
+    ok=$((ok+1))
+  done
+  echo '{"event":"complete","total":2,"dry_run":false}'
+  echo "{\"event\":\"summary\",\"total\":$n,\"deployed\":$ok,\"failed\":0,\"skipped\":0,\"not_run\":0,\"rolled_back\":0,\"duration\":4,\"exit_code\":0,\"stopped_early\":false,\"services\":[]}"
+  ;;
+ask)
+  case "$FAKE_SCENARIO" in
+  not_logged_in) echo '{"type":"error","error":"not_logged_in","message":"The Muster Assistant needs a Fleet Cloud login."}'; exit 1 ;;
+  unauthorized) echo '{"type":"error","error":"unauthorized","message":"Fleet Cloud rejected your login (HTTP 401)."}'; exit 1 ;;
+  payment) echo '{"type":"error","error":"payment_required","message":"Your Muster Assistant sessions are used up for this plan.","upgrade_url":"https://cloud.example.test/billing"}'; exit 1 ;;
+  consent) case " $* " in *" --yes "*) ;; *) echo '{"type":"error","error":"consent_required","message":"Sending project data to the Muster Assistant needs your consent for acme-store."}'; exit 1 ;; esac ;;
+  esac
+  log=${FAKE_STDIN_LOG:-/dev/null}
+  echo '{"type":"session","session_id":"sess_1","plan":"free","remaining_sessions":4}'
+  echo '{"type":"text","delta":"Let me check the "}'
+  echo '{"type":"text","delta":"current status first.\n"}'
+  echo '{"type":"tool_request","tool_use_id":"tu_1","name":"muster_status","input":{}}'
+  echo '{"type":"turn_end","stop_reason":"tool_use"}'
+  echo '{"type":"tool_running","tool_use_id":"tu_1","name":"muster_status","kind":"read","summary":"Checking service status…"}'
+  echo '{"type":"tool_result","tool_use_id":"tu_1","name":"muster_status","is_error":false,"content":"{\"services\":{\"api\":{\"status\":\"unhealthy\"}}}"}'
+  echo '{"type":"text","delta":"The **api** deploy failed: the database password is wrong.\n"}'
+  echo '{"type":"tool_request","tool_use_id":"tu_2","name":"muster_rollback","input":{"service":"api"}}'
+  echo '{"type":"turn_end","stop_reason":"tool_use"}'
+  echo '{"type":"approval_needed","tool_use_id":"tu_2","name":"muster_rollback","summary":"Roll back api to the previous version","input":{"service":"api"}}'
+  IFS= read -r line || line=""
+  echo "$line" >> "$log"
+  case "$line" in
+  *'"approve":"tu_2"'*)
+    echo '{"type":"tool_running","tool_use_id":"tu_2","name":"muster_rollback","kind":"action","summary":"Rolling back api…"}'
+    echo '{"type":"tool_result","tool_use_id":"tu_2","name":"muster_rollback","is_error":false,"content":"api rolled back"}'
+    echo '{"type":"text","delta":"Rolled back **api**. Fix DB_PASSWORD in .env, then redeploy."}' ;;
+  *)
+    echo '{"type":"tool_result","tool_use_id":"tu_2","name":"muster_rollback","is_error":true,"content":"The user declined this action."}'
+    echo '{"type":"text","delta":"OK, not rolling back. Run `muster rollback api` when ready."}' ;;
+  esac
+  echo '{"type":"turn_end","stop_reason":"end_turn"}'
+  echo '{"type":"awaiting_input"}'
+  while IFS= read -r line; do
+    echo "$line" >> "$log"
+    case "$line" in
+    *'"message"'*)
+      echo '{"type":"text","delta":"You asked a follow-up. All good."}'
+      echo '{"type":"turn_end","stop_reason":"end_turn"}'
+      echo '{"type":"awaiting_input"}' ;;
+    *'"end"'*) break ;;
+    esac
+  done
+  echo '{"type":"done","session_id":"sess_1","ok":true}'
+  ;;
+*) echo "fake-muster-07: unhandled $*" >&2; exit 2 ;;
+esac

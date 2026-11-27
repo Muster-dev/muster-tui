@@ -9,19 +9,73 @@ import (
 	"time"
 )
 
-// ServiceStatus is one entry of `muster status --json`.
+// ServiceStatus is one entry of `muster status --json`. The fields after
+// Detail come from muster ≥ 0.7 and are zero on older CLIs.
 type ServiceStatus struct {
 	Key        string `json:"-"`
 	Name       string `json:"name"`
-	Status     string `json:"status"` // healthy, unhealthy, disabled, no_health_check
+	Status     string `json:"status"` // healthy, unhealthy, disabled, no_health_check, blocked
 	HealthType string `json:"health_type"`
 	Detail     string `json:"detail"`
+
+	Stack      string      `json:"stack"`  // k8s, compose, docker, dev, bare
+	Target     string      `json:"target"` // what the health check aims at
+	Remote     string      `json:"remote"` // user@host[:port]
+	LastDeploy *LastDeploy `json:"last_deploy"`
+	LockedBy   *Lock       `json:"locked_by"`
+	Deploying  bool        `json:"deploying"`
+	Replicas   *Replicas   `json:"replicas"`
+}
+
+// LastDeploy is the newest deploy event for a service (status --json).
+type LastDeploy struct {
+	TS     string `json:"ts"`
+	Status string `json:"status"`
+	Commit string `json:"commit"`
+	Source string `json:"source"`
+}
+
+// Lock is a deploy lock holder.
+type Lock struct {
+	User     string `json:"user"`
+	Host     string `json:"host"`
+	Source   string `json:"source"`
+	PID      int    `json:"pid"`
+	Started  string `json:"started"`
+	Services string `json:"services"` // project lock only
+}
+
+// Who renders "user@host" (or just the user).
+func (l *Lock) Who() string {
+	if l == nil {
+		return ""
+	}
+	who := l.User
+	if l.Host != "" {
+		if who != "" {
+			who += "@"
+		}
+		who += l.Host
+	}
+	if who == "" {
+		who = "someone"
+	}
+	return who
+}
+
+// Replicas is a k8s deployment's ready/desired count.
+type Replicas struct {
+	Ready   int `json:"ready"`
+	Desired int `json:"desired"`
 }
 
 // StatusResult is `muster status --json`.
 type StatusResult struct {
-	Project  string                   `json:"project"`
-	Services map[string]ServiceStatus `json:"services"`
+	Project    string                   `json:"project"`
+	CheckedAt  string                   `json:"checked_at"`
+	Deploying  bool                     `json:"deploying"`
+	DeployLock *Lock                    `json:"deploy_lock"`
+	Services   map[string]ServiceStatus `json:"services"`
 }
 
 // Status runs `muster status --json`.
@@ -112,25 +166,38 @@ func (e *Engine) Doctor(ctx context.Context, fix bool) (DoctorResult, error) {
 // known to this version are kept in Raw; non-JSON lines arrive as events
 // "output" (stdout) or "stderr".
 type DeployEvent struct {
-	Event     string   `json:"event"`
-	Service   string   `json:"service"`
-	Name      string   `json:"name"`
-	Status    string   `json:"status"`
-	Line      string   `json:"line"`
-	Message   string   `json:"message"`
-	Reason    string   `json:"reason"`
-	LogFile   string   `json:"log_file"`
-	Hook      string   `json:"hook"`
-	Remote    string   `json:"remote"`
-	Branch    string   `json:"branch"`
-	Index     int      `json:"index"`
-	Total     int      `json:"total"`
-	ExitCode  int      `json:"exit_code"`
-	HookLines int      `json:"hook_lines"`
-	Timeout   int      `json:"timeout"`
-	DryRun    bool     `json:"dry_run"`
-	Duration  float64  `json:"duration"`
-	Files     []string `json:"files"`
+	Event     string    `json:"event"`
+	Service   string    `json:"service"`
+	Name      string    `json:"name"`
+	Status    string    `json:"status"`
+	Line      string    `json:"line"`
+	Message   string    `json:"message"`
+	Reason    string    `json:"reason"`
+	LogFile   string    `json:"log_file"`
+	Hook      string    `json:"hook"`
+	Remote    string    `json:"remote"`
+	Branch    string    `json:"branch"`
+	Index     int       `json:"index"`
+	Total     int       `json:"total"`
+	ExitCode  int       `json:"exit_code"`
+	HookLines int       `json:"hook_lines"`
+	Timeout   int       `json:"timeout"`
+	DryRun    bool      `json:"dry_run"`
+	Duration  float64   `json:"duration"`
+	Files     []FileRef `json:"files"`
+
+	// muster ≥ 0.7
+	Action       string          `json:"action"` // rollback, restart (start/summary)
+	Method       string          `json:"method"` // restart: hook, k8s, compose, docker, redeploy
+	After        string          `json:"after"`  // stopped
+	Remaining    int             `json:"remaining"`
+	NotRun       int             `json:"not_run"`
+	Restarted    int             `json:"restarted"`
+	StoppedEarly bool            `json:"stopped_early"`
+	Source       string          `json:"source"`  // logs
+	Pattern      string          `json:"pattern"` // diagnosis
+	PodStatus    string          `json:"pod_status"`
+	HintRaw      json.RawMessage `json:"hint"` // object on "hint" events, text on "diagnosis"
 
 	// summary event (muster ≥ 0.5.61; "succeeded" is an older spelling)
 	Deployed   int              `json:"deployed"`
@@ -143,6 +210,47 @@ type DeployEvent struct {
 	Raw json.RawMessage `json:"-"`
 }
 
+// FileRef is a file named in an event: a plain path (older CLIs) or
+// {"key":"api/deploy.sh","state":"changed"} (muster ≥ 0.7).
+type FileRef struct {
+	Key   string `json:"key"`
+	State string `json:"state"`
+}
+
+// UnmarshalJSON accepts both shapes.
+func (f *FileRef) UnmarshalJSON(b []byte) error {
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		*f = FileRef{Key: s}
+		return nil
+	}
+	type plain FileRef
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*f = FileRef(p)
+	return nil
+}
+
+// Hint returns the "Likely cause / Try" of a hint event (or the text hint
+// of a diagnosis event), nil when there is none.
+func (ev DeployEvent) Hint() *Hint {
+	if len(ev.HintRaw) == 0 || string(ev.HintRaw) == "null" {
+		return nil
+	}
+	var h Hint
+	if json.Unmarshal(ev.HintRaw, &h) == nil && (h.Title != "" || h.Try != "") {
+		return &h
+	}
+	var s string
+	if json.Unmarshal(ev.HintRaw, &s) == nil && s != "" {
+		title, _ := ev.Field("summary").(string)
+		return &Hint{ID: ev.Pattern, Title: title, Try: s}
+	}
+	return nil
+}
+
 // SummaryService is one row of the summary event.
 type SummaryService struct {
 	Service  string  `json:"service"`
@@ -150,6 +258,23 @@ type SummaryService struct {
 	Duration float64 `json:"duration"`
 	Health   string  `json:"health"`
 	LogFile  string  `json:"log_file"`
+}
+
+// UnmarshalJSON also accepts a bare service name (error events list the
+// affected services as strings).
+func (s *SummaryService) UnmarshalJSON(b []byte) error {
+	var name string
+	if json.Unmarshal(b, &name) == nil {
+		*s = SummaryService{Service: name}
+		return nil
+	}
+	type plain SummaryService
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*s = SummaryService(p)
+	return nil
 }
 
 // OK counts successful services in a summary (either spelling).
@@ -168,6 +293,10 @@ func (ev DeployEvent) Field(name string) any {
 type DeployOptions struct {
 	DryRun bool
 	Force  bool
+	// muster ≥ 0.7: end after the first failed service (the rest are
+	// reported not_run), and start at From in deploy order.
+	StopOnFailure bool
+	From          string
 }
 
 // DeployStream is a running deploy.
@@ -188,7 +317,19 @@ func (e *Engine) Deploy(ctx context.Context, services []string, opt DeployOption
 	if opt.Force {
 		args = append(args, "--force")
 	}
+	if opt.StopOnFailure {
+		args = append(args, "--stop-on-failure")
+	}
+	if opt.From != "" {
+		args = append(args, "--from", opt.From)
+	}
 	args = append(args, services...)
+	return e.Stream(ctx, args...)
+}
+
+// Stream runs a muster command that prints deploy-style NDJSON events
+// (deploy, rollback --json, restart --json, logs --json).
+func (e *Engine) Stream(ctx context.Context, args ...string) (*DeployStream, error) {
 	authGate.Lock()
 	ls, err := e.Raw(ctx, args...)
 	if err != nil {
@@ -232,6 +373,15 @@ func ParseDeployLine(text string, stderr bool) DeployEvent {
 				}
 			}
 			return ev
+		}
+		// A field with an unexpected type must not lose the whole event:
+		// keep the basics (new CLI versions may change a shape).
+		var basic struct {
+			Event, Service, Name, Status, Line, Message, Reason string
+		}
+		if json.Unmarshal([]byte(t), &basic) == nil && basic.Event != "" {
+			return DeployEvent{Event: basic.Event, Service: basic.Service, Name: basic.Name, Status: basic.Status,
+				Line: basic.Line, Message: basic.Message, Reason: basic.Reason, Raw: json.RawMessage(t)}
 		}
 	}
 	kind := "output"

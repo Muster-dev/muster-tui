@@ -88,9 +88,10 @@ func (e *Engine) env() []string {
 // CLIError is a structured error the CLI printed as JSON on stderr, e.g.
 // {"error":"auth_required","message":"MUSTER_TOKEN not set"}.
 type CLIError struct {
-	Code     string `json:"error"`
-	Message  string `json:"message"`
-	ExitCode int    `json:"-"`
+	Code     string          `json:"error"`
+	Message  string          `json:"message"`
+	Files    json.RawMessage `json:"files"` // dangerous_hooks
+	ExitCode int             `json:"-"`
 }
 
 func (e *CLIError) Error() string {
