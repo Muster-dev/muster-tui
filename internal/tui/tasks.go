@@ -109,6 +109,13 @@ func listen(id int, ch <-chan tea.Msg) tea.Cmd {
 	}
 }
 
+// Relabel renames a running task (shown in the header spinner).
+func (t *Tasks) Relabel(id int, label string) {
+	if task, ok := t.tasks[id]; ok {
+		task.Label = label
+	}
+}
+
 // Get returns a running task.
 func (t *Tasks) Get(id int) *Task { return t.tasks[id] }
 

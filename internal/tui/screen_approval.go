@@ -226,6 +226,9 @@ func (s *approvalScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 			return s, nil, true
 		}
 		if len(s.changes) == 0 {
+			if s.then != "" {
+				return s, s.approved(), true // nothing left to approve: carry on
+			}
 			return s, func() tea.Msg { return backMsg{} }, true
 		}
 		return s, s.approve(), true
@@ -311,7 +314,12 @@ func (s *approvalScreen) View(w, h int) string {
 		case s.err != nil && s.phase == 0:
 			lines = append(lines, theme.Err.Render(theme.GlyphFail+" ")+errText(s.err))
 		default:
-			lines = append(lines, theme.OK.Render(theme.GlyphOK)+" Every hook matches what you approved.", "", keyHint("Esc", "back"))
+			lines = append(lines, theme.OK.Render(theme.GlyphOK)+" Every hook matches what you approved.", "")
+			if s.then != "" {
+				lines = append(lines, keyHint("Enter", "continue with "+s.then, "Esc", "back"))
+			} else {
+				lines = append(lines, keyHint("Esc", "back"))
+			}
 		}
 		return block(lines, w, h)
 	}

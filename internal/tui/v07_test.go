@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Muster-dev/muster-tui/internal/engine"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 )
@@ -229,4 +230,89 @@ func TestExplainNothingToExplain(t *testing.T) {
 	f := startFlow(t, d, 120, 30)
 	f.send(runLineMsg{"explain web"}).wait("No known problem pattern matched")
 	f.end()
+}
+
+func TestDeployAllIsOneStopOnFailureCall(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "argv")
+	d := deps07(t, "approved", "FAKE_LOG="+log)
+	f := startFlow(t, d, 120, 30)
+	f.send(runLineMsg{"deploy api web"}).wait("Deployed 2 services")
+	m, _ := f.end()
+	argv, _ := os.ReadFile(log)
+	if n := strings.Count(string(argv), "deploy --json"); n != 1 || !strings.Contains(string(argv), "deploy --json --stop-on-failure api web") {
+		t.Fatalf("want one call:\n%s", argv)
+	}
+	dd := m.screens["deploy"].(*deployScreen)
+	if dd.runs[0].state != rsOK || dd.runs[1].state != rsOK {
+		t.Fatalf("%v %v", dd.runs[0].state, dd.runs[1].state)
+	}
+}
+
+func TestDeployFailureShowsHintFixThenSkipResumesFrom(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "argv")
+	d := deps07(t, "approved", "FAKE_LOG="+log, "FAKE_FAIL=api")
+	f := startFlow(t, d, 120, 34)
+	f.send(runLineMsg{"deploy api web"}).wait("api timed out after 2s", "Likely cause:", "Fix: Raise api deploy_timeout to 4s · f", "Abort   Fix")
+	f.key("f").wait("Raise api deploy_timeout to 4s?", "Apply fix")
+	f.key("enter").wait("Fix applied — r to retry api")
+	f.key("s").wait("Finished with problems")
+	m, view := f.end()
+	argv, _ := os.ReadFile(log)
+	for _, want := range []string{"deploy --json --stop-on-failure api web", "explain api --fix --yes", "deploy --json --stop-on-failure --from web api web"} {
+		if !strings.Contains(string(argv), want) {
+			t.Errorf("missing %q in\n%s", want, argv)
+		}
+	}
+	dd := m.screens["deploy"].(*deployScreen)
+	if dd.runs[0].state != rsSkipped || dd.runs[1].state != rsOK {
+		t.Fatalf("states %v %v\n%s", dd.runs[0].state, dd.runs[1].state, view)
+	}
+}
+
+func TestDeployFailureFallsBackToExplain(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "argv")
+	d := deps07(t, "nohint", "FAKE_LOG="+log, "FAKE_FAIL=web")
+	f := startFlow(t, d, 120, 34)
+	f.send(runLineMsg{"deploy api web"}).wait("web timed out", "Likely cause:", "web hook ran longer")
+	f.end()
+	argv, _ := os.ReadFile(log)
+	if !strings.Contains(string(argv), "explain web --json") {
+		t.Fatalf("argv:\n%s", argv)
+	}
+}
+
+func TestDeployRetryAfterFixGoesThroughApproval(t *testing.T) {
+	d := deps07(t, "approved", "FAKE_FAIL=api")
+	f := startFlow(t, d, 120, 34)
+	f.send(runLineMsg{"deploy api web"}).wait("Abort   Fix")
+	f.send(hooksMsg{hs: engine.HooksStatus{SecurityEnabled: true, Config: &engine.HookFile{Key: "_config/muster.json", Path: "muster.json", State: "changed"}}})
+	// The approval screen opens; the CLI then says nothing is pending any
+	// more, so Enter carries on with retry.
+	f.key("r").wait("continue with retry")
+	f.key("enter")
+	time.Sleep(time.Second)
+	m, _ := f.end()
+	if dd := m.screens["deploy"].(*deployScreen); dd.runs[0].attempts != 2 {
+		t.Fatalf("attempts=%d", dd.runs[0].attempts)
+	}
+}
+
+func TestStreamRoutingFollowsMustersOrder(t *testing.T) {
+	m := New(deps07(t, "approved"))
+	d := newDeploy(m.env, []string{"api", "redis", "web"}, false, false, true)
+	d.phase, d.started = phRunning, fixedNow
+	d.beginRun(d.runs[0]) // we guessed api goes first
+	ev := func(js string) { d.onEvent(engine.ParseDeployLine(js, false)) }
+	ev(`{"event":"start","service":"redis"}`) // infra first
+	ev(`{"event":"done","service":"redis","status":"success"}`)
+	ev(`{"event":"start","service":"api"}`)
+	if d.runs[0].key != "redis" || d.runs[0].state != rsOK || d.runs[1].key != "api" || d.runs[1].state != rsRunning || d.runs[1].attempts != 1 {
+		t.Fatalf("%s=%v %s=%v attempts=%d", d.runs[0].key, d.runs[0].state, d.runs[1].key, d.runs[1].state, d.runs[1].attempts)
+	}
+	ev(`{"event":"done","service":"api","status":"failed","exit_code":1}`)
+	ev(`{"event":"stopped","reason":"failure","after":"api","remaining":1}`)
+	d.onTaskEnd(false)
+	if d.phase != phFailed || d.failedService() != "api" || d.runs[2].state != rsPending {
+		t.Fatalf("phase=%v failed=%s web=%v", d.phase, d.failedService(), d.runs[2].state)
+	}
 }

@@ -47,6 +47,9 @@ type svcRun struct {
 	rolledBack bool
 	collapsed  bool
 	sawDone    bool
+	hint       *engine.Hint // Likely cause / Try (muster ≥ 0.7)
+	fixed      bool         // its fix was applied
+	seen       int          // events received this attempt (stream mode)
 }
 
 func (r *svcRun) step(label string) *step {
@@ -80,30 +83,35 @@ const (
 
 var recoveryChoices = []string{"Retry", "Rollback", "Skip", "Abort"}
 
-// deployScreen runs `muster deploy --json <svc>` one service at a time so it
-// can stop on a failure and offer Retry / Rollback / Skip / Abort. Dry runs
-// use a single `deploy --json --dry-run` call.
+// deployScreen stops on a failure and offers Retry / Rollback / Skip /
+// Abort (and Fix when muster knows one). On muster ≥ 0.7 it makes one
+// `deploy --json --stop-on-failure` call and resumes with `--from <svc>`;
+// older CLIs get one `deploy --json <svc>` call per service. Dry runs use a
+// single `deploy --json --dry-run` call.
 type deployScreen struct {
-	env      *Env
-	dry      bool
-	force    bool
-	explicit bool // services were named (vs "everything")
-	phase    deployPhase
-	runs     []*svcRun
-	cur      int
-	taskID   int
-	choice   int
-	sel      int
-	scroll   int
-	started  time.Time
-	ended    time.Time
-	plan     []engine.DeployEvent
-	summary  *engine.DeployEvent
-	fatal    string
+	env       *Env
+	dry       bool
+	force     bool
+	explicit  bool // services were named (vs "everything")
+	phase     deployPhase
+	runs      []*svcRun
+	cur       int
+	taskID    int
+	choice    int
+	sel       int
+	scroll    int
+	started   time.Time
+	ended     time.Time
+	plan      []engine.DeployEvent
+	summary   *engine.DeployEvent
+	fatal     string
+	v07       bool // one stop-on-failure stream instead of per-service calls
+	explainID int
+	fixID     int
 }
 
 func newDeploy(env *Env, services []string, dry, force, explicit bool) *deployScreen {
-	d := &deployScreen{env: env, dry: dry, force: force, sel: -1, explicit: explicit}
+	d := &deployScreen{env: env, dry: dry, force: force, sel: -1, explicit: explicit, v07: env.V07()}
 	keys := services
 	if len(keys) == 0 && env.State.Project != nil {
 		for _, s := range env.State.Project.Services() {
@@ -205,6 +213,83 @@ func (d *deployScreen) startDry() tea.Cmd {
 	return cmd
 }
 
+// startStream deploys the remaining services in one call that stops at the
+// first failure (muster ≥ 0.7). Events are routed to services by name.
+func (d *deployScreen) startStream() tea.Cmd {
+	r := d.runs[d.cur]
+	d.beginRun(r)
+	var svcs []string
+	if d.explicit {
+		for _, x := range d.runs {
+			svcs = append(svcs, x.key)
+		}
+	}
+	opt := engine.DeployOptions{Force: d.force, StopOnFailure: true}
+	if d.cur > 0 {
+		opt.From = r.key
+	}
+	eng := d.env.Eng()
+	id, cmd := d.env.Tasks.Stream("deploying "+r.key, d.Key(), true, func(ctx context.Context) (<-chan tea.Msg, error) {
+		s, err := eng.Deploy(ctx, svcs, opt)
+		if err != nil {
+			return nil, err
+		}
+		return pipeDeploy(s), nil
+	})
+	d.taskID = id
+	return cmd
+}
+
+// route makes the event's service the current one (stream mode): the
+// previous service is finished when the next one starts.
+func (d *deployScreen) route(ev engine.DeployEvent) {
+	if ev.Service == "" || d.cur >= len(d.runs) || ev.Service == d.runs[d.cur].key {
+		return
+	}
+	idx := -1
+	for i, r := range d.runs {
+		if r.key == ev.Service {
+			idx = i
+		}
+	}
+	if idx < 0 { // muster deployed something we didn't list
+		name := ev.Service
+		if p := d.env.State.Project; p != nil && p.HasService(ev.Service) {
+			name = p.Service(ev.Service).Name
+		}
+		d.runs = append(d.runs, &svcRun{key: ev.Service, name: name})
+		idx = len(d.runs) - 1
+	}
+	if idx < d.cur && d.runs[idx].state != rsPending {
+		return
+	}
+	next := d.cur + 1
+	switch prev := d.runs[d.cur]; {
+	case prev.state == rsRunning && prev.seen == 0:
+		// muster started with a different service than we guessed (deploy
+		// phases, infra first): this one hasn't run yet.
+		prev.state, prev.start = rsPending, time.Time{}
+		prev.attempts--
+		d.env.State.Svc(prev.key).Deploying = false
+		next = d.cur
+	case prev.state == rsRunning || prev.state == rsSkipped:
+		d.finishRun(prev, false)
+	}
+	// Keep the list in muster's order.
+	r := d.runs[idx]
+	d.runs = append(d.runs[:idx], d.runs[idx+1:]...)
+	if idx < next {
+		next--
+	}
+	next = clamp(next, 0, len(d.runs))
+	d.runs = append(d.runs[:next], append([]*svcRun{r}, d.runs[next:]...)...)
+	d.cur = next
+	if r.state == rsPending {
+		d.beginRun(r)
+	}
+	d.env.Tasks.Relabel(d.taskID, "deploying "+ev.Service)
+}
+
 type deployEventMsg struct{ ev engine.DeployEvent }
 type deployExitMsg struct{ err error }
 
@@ -220,14 +305,22 @@ func pipeDeploy(s *engine.DeployStream) <-chan tea.Msg {
 	return out
 }
 
-func (d *deployScreen) startRun() tea.Cmd {
-	r := d.runs[d.cur]
+// beginRun resets a service's attempt.
+func (d *deployScreen) beginRun(r *svcRun) {
 	r.state, r.steps, r.logs, r.warnings = rsRunning, nil, nil, nil
 	r.exitCode, r.timeout, r.reason, r.health, r.sawDone = 0, 0, "", "", false
 	r.start, r.end = d.env.Now(), time.Time{}
 	r.attempts++
-	r.collapsed, r.rolledBack = false, false
+	r.collapsed, r.rolledBack, r.hint, r.fixed, r.seen = false, false, nil, false, 0
 	d.env.State.Svc(r.key).Deploying = true
+}
+
+func (d *deployScreen) startRun() tea.Cmd {
+	if d.v07 {
+		return d.startStream()
+	}
+	r := d.runs[d.cur]
+	d.beginRun(r)
 	eng := d.env.Eng()
 	key, force := r.key, d.force
 	id, cmd := d.env.Tasks.Stream("deploying "+key, d.Key(), true, func(ctx context.Context) (<-chan tea.Msg, error) {
@@ -243,7 +336,22 @@ func (d *deployScreen) startRun() tea.Cmd {
 
 func (d *deployScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	switch m := msg.(type) {
+	case fixConfirmedMsg:
+		if m.owner == d.Key() {
+			return d, d.runFix(m.svc)
+		}
 	case TaskMsg:
+		if m.ID == d.explainID && d.explainID != 0 {
+			if in, ok := m.Msg.(explainMsg); ok && in.err == nil && in.ex.Matched && in.ex.Hint != nil {
+				if r := d.runFor(in.svc); r != nil && r.hint == nil {
+					r.hint = in.ex.Hint
+				}
+			}
+			return d, nil
+		}
+		if m.ID == d.fixID && d.fixID != 0 {
+			return d, d.onFixMsg(m.Msg)
+		}
 		if m.ID != d.taskID {
 			return d, nil
 		}
@@ -300,7 +408,11 @@ func (d *deployScreen) onEvent(ev engine.DeployEvent) tea.Cmd {
 	if d.cur >= len(d.runs) {
 		return nil
 	}
+	if d.v07 && d.phase == phRunning {
+		d.route(ev)
+	}
 	r := d.runs[d.cur]
+	r.seen++
 	finishRunning := func() {
 		for _, s := range r.steps {
 			if s.state == rsRunning {
@@ -384,6 +496,21 @@ func (d *deployScreen) onEvent(ev engine.DeployEvent) tea.Cmd {
 		}
 	case "verify_warning":
 		r.warnings = append(r.warnings, ev.Message)
+	case "hint":
+		r.hint = ev.Hint()
+	case "diagnosis":
+		if h := ev.Hint(); h != nil && r.hint == nil {
+			r.hint = h
+		}
+		if ev.PodStatus != "" {
+			r.addLog("pod " + ev.PodStatus)
+		}
+	case "stopped":
+		// stop-on-failure: the failed service is the current one. A lock
+		// skip stops the run too, so it counts as a failure here.
+		if r.state == rsSkipped {
+			r.state, r.reason = rsRunning, skipText(r.reason)
+		}
 	case "skipped":
 		r.state = rsSkipped
 		r.reason = ev.Reason
@@ -442,6 +569,44 @@ func (d *deployScreen) onTaskEnd(canceled bool) tea.Cmd {
 		return nil
 	}
 	r := d.runs[d.cur]
+	d.finishRun(r, canceled)
+	switch {
+	case canceled:
+		d.markRest(rsNotRun)
+		d.phase, d.ended = phAborted, now
+		return tea.Batch(refresh("status"), refresh("history"))
+	case r.state == rsFailed:
+		d.phase, d.choice = phFailed, 0
+		cmds := []tea.Cmd{refresh("history")}
+		if d.env.Active == d.Key() {
+			cmds = append(cmds, func() tea.Msg { return focusMsg{focusMain} })
+		} else {
+			cmds = append(cmds, toast(lvlErr, r.key+" failed to deploy — retry, rollback "+r.key+", skip or abort"))
+		}
+		if d.v07 && r.hint == nil && r.sawDone {
+			// No hint event: ask the offline rules engine directly.
+			id, cmd := loadExplain(d.env, d.Key(), r.key)
+			d.explainID = id
+			cmds = append(cmds, cmd)
+		}
+		return tea.Batch(cmds...)
+	case d.v07:
+		// The stream covered every remaining service.
+		for i := d.cur + 1; i < len(d.runs); i++ {
+			if d.runs[i].state == rsPending {
+				d.runs[i].state, d.runs[i].reason = rsSkipped, "not deployed by muster"
+			}
+		}
+		d.cur = len(d.runs) - 1
+		return d.advance()
+	default:
+		return d.advance()
+	}
+}
+
+// finishRun settles a service's state once its attempt is over.
+func (d *deployScreen) finishRun(r *svcRun, canceled bool) {
+	now := d.env.Now()
 	r.end = now
 	d.env.State.Svc(r.key).Deploying = false
 	for _, s := range r.steps {
@@ -455,26 +620,70 @@ func (d *deployScreen) onTaskEnd(canceled bool) tea.Cmd {
 	switch {
 	case canceled:
 		r.state = rsCanceled
-		d.markRest(rsNotRun)
-		d.phase, d.ended = phAborted, now
-		return tea.Batch(refresh("status"), refresh("history"))
 	case r.state == rsSkipped:
-		return d.advance()
+		r.collapsed = true
 	case r.exitCode != 0 || r.health == "unhealthy" || (!r.sawDone && r.reason != "") || d.hookFailed(r):
 		r.state = rsFailed
-		d.phase, d.choice = phFailed, 0
-		cmds := []tea.Cmd{refresh("history")}
-		if d.env.Active == d.Key() {
-			cmds = append(cmds, func() tea.Msg { return focusMsg{focusMain} })
-		} else {
-			cmds = append(cmds, toast(lvlErr, r.key+" failed to deploy — retry, rollback "+r.key+", skip or abort"))
-		}
-		return tea.Batch(cmds...)
 	default:
 		r.state = rsOK
 		r.collapsed = true
-		return d.advance()
 	}
+}
+
+func (d *deployScreen) runFor(key string) *svcRun {
+	for _, r := range d.runs {
+		if r.key == key {
+			return r
+		}
+	}
+	return nil
+}
+
+// runFix applies the failed service's fix (the user already confirmed).
+func (d *deployScreen) runFix(svc string) tea.Cmd {
+	r := d.runFor(svc)
+	if r == nil || d.phase != phFailed {
+		return nil
+	}
+	r.addLog("── fix ──")
+	id, cmd := startFix(d.env, d.Key(), svc)
+	d.fixID = id
+	return cmd
+}
+
+func (d *deployScreen) onFixMsg(msg tea.Msg) tea.Cmd {
+	if d.cur >= len(d.runs) {
+		return nil
+	}
+	r := d.runs[d.cur]
+	switch in := msg.(type) {
+	case logBatchMsg:
+		for _, l := range in.lines {
+			r.addLog(l)
+		}
+	case logEndMsg:
+		if in.err != nil {
+			r.addLog("fix failed: " + in.err.Error())
+			return toast(lvlErr, "The fix failed: "+in.err.Error())
+		}
+		r.fixed = true
+		d.choice = 0
+		return tea.Batch(toast(lvlOK, "Fix applied — r to retry "+r.key), func() tea.Msg { return reloadConfigMsg{} }, refresh("hooks"))
+	case taskErrMsg:
+		r.addLog("fix failed: " + in.Err.Error())
+	}
+	return nil
+}
+
+// choices are the recovery buttons for the failed service.
+func (d *deployScreen) choices() []string {
+	out := append([]string(nil), recoveryChoices...)
+	if d.cur < len(d.runs) {
+		if h := d.runs[d.cur].hint; h != nil && h.Fix != nil && !d.runs[d.cur].fixed {
+			out = append(out, "Fix")
+		}
+	}
+	return out
 }
 
 func (d *deployScreen) hookFailed(r *svcRun) bool {
@@ -517,9 +726,22 @@ func (d *deployScreen) recover(choice string) (Screen, tea.Cmd) {
 		return d, toast(lvlInfo, "Nothing to "+choice)
 	}
 	r := d.runs[d.cur]
+	if d.env.Tasks.Running(d.fixID) {
+		return d, toast(lvlInfo, "The fix is still running")
+	}
 	switch strings.ToLower(choice) {
 	case "retry":
+		if d.v07 && len(d.env.State.HookChanges) > 0 {
+			// A fix (or an edit) changed muster.json or a hook: approve it
+			// first, then the approval screen runs `retry`.
+			return d, nav(newApproval(d.env, "retry"))
+		}
 		return d, d.startRun()
+	case "fix":
+		if r.hint == nil || r.hint.Fix == nil {
+			return d, toast(lvlInfo, "muster has no automatic fix for this one")
+		}
+		return d, confirmFix(d.Key(), r.key, r.hint)
 	case "rollback":
 		if r.rolledBack {
 			return d, toast(lvlInfo, r.key+" was already rolled back")
@@ -528,8 +750,19 @@ func (d *deployScreen) recover(choice string) (Screen, tea.Cmd) {
 		r.addLog("── rollback ──")
 		eng := d.env.Eng()
 		key := r.key
+		v07 := d.v07
 		id, cmd := d.env.Tasks.Stream("rolling back "+key, d.Key(), true, func(ctx context.Context) (<-chan tea.Msg, error) {
-			lines, wait, err := eng.Rollback(ctx, key)
+			var lines <-chan string
+			var wait func() error
+			var err error
+			if v07 {
+				var s *engine.DeployStream
+				if s, err = eng.RollbackStream(ctx, key); err == nil {
+					lines, wait, err = streamLines(s, actionEventLines)
+				}
+			} else {
+				lines, wait, err = eng.Rollback(ctx, key)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -574,15 +807,19 @@ func (d *deployScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 		}
 		return d, nil, false
 	case phFailed:
+		ch := d.choices()
 		switch key {
 		case "left", "h":
-			d.choice = (d.choice + len(recoveryChoices) - 1) % len(recoveryChoices)
+			d.choice = (d.choice + len(ch) - 1) % len(ch)
 			return d, nil, true
 		case "right", "l", "tab":
-			d.choice = (d.choice + 1) % len(recoveryChoices)
+			d.choice = (d.choice + 1) % len(ch)
 			return d, nil, true
 		case "enter":
-			s, cmd := d.recover(recoveryChoices[d.choice])
+			s, cmd := d.recover(ch[min(d.choice, len(ch)-1)])
+			return s, cmd, true
+		case "f":
+			s, cmd := d.recover("fix")
 			return s, cmd, true
 		case "r":
 			s, cmd := d.recover("retry")
@@ -820,9 +1057,22 @@ func (d *deployScreen) recoveryLines(w int) []string {
 	}
 	out = append(out, rule(w))
 	out = append(out, theme.Err.Render(theme.GlyphFail+" "+r.key+" "+what))
-	for _, l := range diagnose(r) {
-		for _, wl := range wrap(l, w-2) {
-			out = append(out, "  "+wl)
+	if r.hint != nil {
+		for _, l := range hintLines(r.hint, w-2) {
+			out = append(out, "  "+l)
+		}
+		if f := r.hint.Fix; f != nil {
+			if r.fixed {
+				out = append(out, "  "+theme.OK.Render(theme.GlyphOK+" Fixed: ")+f.Label+theme.Dim.Render(" — r to retry"))
+			} else {
+				out = append(out, "  "+theme.OK.Render("Fix: ")+f.Label+theme.Dim.Render(" · f"))
+			}
+		}
+	} else {
+		for _, l := range diagnose(r) {
+			for _, wl := range wrap(l, w-2) {
+				out = append(out, "  "+wl)
+			}
 		}
 	}
 	for _, l := range tail(nonEmpty(r.logs), 5) {
@@ -835,15 +1085,24 @@ func (d *deployScreen) recoveryLines(w int) []string {
 		out = append(out, "", theme.AccentFg.Render(d.env.Spin())+" Rolling back "+r.key+"…")
 		return out
 	}
+	if d.env.Tasks.Running(d.fixID) {
+		out = append(out, "", theme.AccentFg.Render(d.env.Spin())+" Applying the fix…")
+		return out
+	}
 	var btns []string
-	for i, c := range recoveryChoices {
+	ch := d.choices()
+	for i, c := range ch {
 		label := c
 		if c == "Rollback" && r.rolledBack {
 			label = "Rolled back"
 		}
 		btns = append(btns, button(label, i == d.choice))
 	}
-	out = append(out, "", strings.Join(btns, " ")+"   "+theme.Dim.Render("r · b · s · a"))
+	keys := "r · b · s · a"
+	if len(ch) > len(recoveryChoices) {
+		keys += " · f"
+	}
+	out = append(out, "", strings.Join(btns, " ")+"   "+theme.Dim.Render(keys))
 	return out
 }
 
@@ -953,14 +1212,18 @@ func (d *deployScreen) Hint() string {
 	case phRollingBack:
 		return theme.AccentFg.Render(d.env.Spin()) + " Rolling back — " + keyHint("Esc", "cancel")
 	case phFailed:
-		return theme.Err.Render(d.runs[d.cur].key+" failed") + theme.Dim.Render(" — ") + keyHint("r", "retry", "b", "rollback", "s", "skip", "a", "abort")
+		pairs := []string{"r", "retry", "b", "rollback", "s", "skip", "a", "abort"}
+		if len(d.choices()) > len(recoveryChoices) {
+			pairs = append(pairs, "f", "fix")
+		}
+		return theme.Err.Render(d.runs[d.cur].key+" failed") + theme.Dim.Render(" — ") + keyHint(pairs...)
 	}
 	return ""
 }
 
 func (d *deployScreen) Keys() []KeyHelp {
 	return []KeyHelp{
-		{"Enter", "start / choose"}, {"r b s a", "retry · rollback · skip · abort"}, {"← →", "move between choices"},
+		{"Enter", "start / choose"}, {"r b s a", "retry · rollback · skip · abort"}, {"f", "apply muster's fix (asks first)"}, {"← →", "move between choices"},
 		{"j / k", "select a service"}, {"Space", "expand / collapse"}, {"Ctrl+O", "full log"}, {"Esc", "cancel deploy"},
 	}
 }
