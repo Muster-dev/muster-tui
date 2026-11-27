@@ -1,0 +1,1 @@
+{"machines":{"prod-1":{"host":"10.0.0.5","user":"deploy","port":2222,"transport":"ssh","hook_mode":"manual","project_dir":"/opt/acme","identity_file":"~/.ssh/id_ed25519"},"edge-1":{"host":"edge.example","user":"ops","port":"22","transport":"cloud"}},"groups":{"prod":["prod-1","edge-1"],"canary":{"machines":["edge-1"]}}}

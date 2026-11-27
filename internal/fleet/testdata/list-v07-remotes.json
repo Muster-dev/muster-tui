@@ -1,0 +1,1 @@
+{"source":"remotes.json","machines":[{"name":"web-1","host":"web1.internal","user":"deploy","port":22,"transport":"ssh","mode":"push","hook_mode":"auto","project_dir":"/srv/app","identity_file":null,"fleet":"","group":null,"paired":true}],"groups":[]}
