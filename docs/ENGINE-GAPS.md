@@ -332,10 +332,11 @@ The server screen (remote-first home) wants more than `fleet` offers today:
   --json` reports the remote muster or muster-agent version. A `version`
   (and `agent_version` for cloud) field per machine would let the header show
   it and warn about old agents.
-* **Pairing hint.** `fleet list --json` can report `"paired": true` while
-  `fleet status --json` says `"error": "unpaired"` (seen for a cloud
-  server); the TUI trusts `fleet status`. An explicit `paired` in `fleet
-  status --json` would remove the guess.
+* **Pairing hint.** `fleet list --json` reported a cloud server as
+  `"paired": true` while `fleet deploy --dry-run` listed it as `unpaired`;
+  for SSH servers `fleet status --json` says `"error": "unpaired"`. The TUI
+  trusts `fleet status`, then `fleet list`. An explicit `paired` field in
+  `fleet status --json` would remove the guess.
 * **`ask` without a project.** `muster ask` needs a `muster.json`, so "Ask
   assistant" on a server is disabled in a folder without one. A
   `muster ask --machine <name>` that brings that server's context would make

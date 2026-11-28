@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Muster-dev/muster-tui/internal/engine"
+	"github.com/Muster-dev/muster-tui/internal/fleet"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -52,12 +53,15 @@ func TestResizeToTinyNeverPanics(t *testing.T) {
 		msgs = append(msgs, f)
 	}
 	m = feed(m, msgs...)
+	m = feed(m, testFleet, fleetHealthMsg{st: []fleet.MachineStatus{{Machine: "prod-1", Reachable: true, Services: []fleet.ServiceHealth{{Service: "a-very-long-service-name-indeed", Status: "blocked", Detail: "health hook blocked by security check (muster hooks status --json)"}}}}})
 	screens := []func(e *Env) Screen{
 		func(e *Env) Screen { return newDashboard(e) },
 		func(e *Env) Screen { return newDeploy(e, []string{"api", "web"}, false, false, false) },
 		func(e *Env) Screen { return newDockerScreen(e, 0) },
 		func(e *Env) Screen { return newSettings(e) },
 		func(e *Env) Screen { return newServers(e) },
+		func(e *Env) Screen { return newServerScreen(e, "prod-1") },
+		func(e *Env) Screen { return newPairScreen(e, "prod-1") },
 		func(e *Env) Screen { return newHistoryScreen(e) },
 		func(e *Env) Screen { return newDoctorScreen(e, false) },
 		func(e *Env) Screen { return newServiceScreen(e, "api") },
