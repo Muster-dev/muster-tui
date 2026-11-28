@@ -250,6 +250,19 @@ func (m Model) footerLeft() string {
 	if h := s.Hint(); h != "" {
 		return h
 	}
+	if m.active != "dashboard" {
+		// A few of the screen's own keys, and the way back.
+		var keys []KeyHelp
+		for _, k := range s.Keys() {
+			if len(keys) == 4 {
+				break
+			}
+			if replayable(k.Key) && k.Key != "?" {
+				keys = append(keys, KeyHelp{k.Key, shortDesc(k.Desc)})
+			}
+		}
+		return m.hintRow(append(keys, KeyHelp{"esc", "back"}))
+	}
 	return stateHint(m.env)
 }
 
@@ -317,4 +330,16 @@ func firstNonEmpty(xs ...string) string {
 		}
 	}
 	return ""
+}
+
+// shortDesc keeps the first few words of a help line for the footer.
+func shortDesc(s string) string {
+	if i := strings.IndexAny(s, "(—·,"); i > 0 {
+		s = s[:i]
+	}
+	f := strings.Fields(s)
+	if len(f) > 3 {
+		f = f[:3]
+	}
+	return strings.Join(f, " ")
 }

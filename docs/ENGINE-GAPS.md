@@ -316,7 +316,33 @@ that is allowed for the local user (the same internal path the launcher
 uses), or local `--json` reads that don't require a token when run by the
 project owner.
 
-## 15. Minor
+## 15. Per-server actions and details — P2
+
+The server screen (remote-first home) wants more than `fleet` offers today:
+
+* **Logs and restart on a server.** There's no `muster fleet logs <name>
+  <svc> [--tail N] [--json]` or `muster fleet restart <name> [svc]`, so the
+  server screen shows Logs and Restart disabled. Cloud servers can't be
+  reached any other way (no SSH).
+* **Recent deploys on a server.** `fleet status --json` carries each
+  service's `last_deploy` (often null); a `muster fleet history <name>
+  --json` (the server's own deploy-events log) would fill a "Recent deploys"
+  list.
+* **Agent / muster version.** Neither `fleet list --json` nor `fleet status
+  --json` reports the remote muster or muster-agent version. A `version`
+  (and `agent_version` for cloud) field per machine would let the header show
+  it and warn about old agents.
+* **Pairing hint.** `fleet list --json` can report `"paired": true` while
+  `fleet status --json` says `"error": "unpaired"` (seen for a cloud
+  server); the TUI trusts `fleet status`. An explicit `paired` in `fleet
+  status --json` would remove the guess.
+* **`ask` without a project.** `muster ask` needs a `muster.json`, so "Ask
+  assistant" on a server is disabled in a folder without one. A
+  `muster ask --machine <name>` that brings that server's context would make
+  it work from the servers home.
+* **`fleet test --json`.** Only text output; the TUI opens it as a log.
+
+## 16. Minor
 
 * `history --json` without `--all` silently truncates to 20; the TUI
   always passes `--all`. A `--since <ts>` / `--limit N` would be cheaper.
