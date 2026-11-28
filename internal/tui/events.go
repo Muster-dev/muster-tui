@@ -131,7 +131,7 @@ func restartMethod(m string) string {
 func errorEventText(ev engine.DeployEvent) string {
 	switch ev.Reason {
 	case "hooks_not_approved":
-		return "Hooks changed since you approved them on this machine — type approve"
+		return "Hooks changed since you approved them on this computer — type approve"
 	case "no_hook":
 		return ev.Service + " has no hook for this"
 	case "locked":

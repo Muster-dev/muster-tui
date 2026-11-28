@@ -23,7 +23,7 @@ func (e *Env) assistantReady() (bool, string) {
 	case e.Engine == nil || !e.V07():
 		return false, "needs muster " + engine.EngineAPIVersion
 	case st.Cloud.AssistantOff:
-		return false, "turned off on this machine"
+		return false, "turned off on this computer"
 	case !st.Cloud.HasToken:
 		return false, "needs a Fleet Cloud login"
 	case st.AssistantUnavailable != "":
@@ -178,7 +178,7 @@ func (s *askScreen) fail(code, msg, upgrade string) {
 	case "not_logged_in", "unauthorized":
 		s.env.State.AssistantUnavailable = "needs a Fleet Cloud login"
 	case "disabled":
-		s.env.State.AssistantUnavailable = "turned off on this machine"
+		s.env.State.AssistantUnavailable = "turned off on this computer"
 	}
 }
 
@@ -520,7 +520,7 @@ func (s *askScreen) View(w, h int) string {
 		}
 		lines := append(head, "")
 		lines = append(lines, wrap("Send redacted logs and config from "+name+" to the Muster Assistant?", w)...)
-		lines = append(lines, "", theme.Dim.Render("Secrets, tokens and .env values are removed on this machine before anything is sent."),
+		lines = append(lines, "", theme.Dim.Render("Secrets, tokens and .env values are removed on this computer before anything is sent."),
 			theme.Dim.Render("Your answer is saved in .muster/assistant.json (kept out of git)."))
 		return block(lines, w, h)
 	case askInput:

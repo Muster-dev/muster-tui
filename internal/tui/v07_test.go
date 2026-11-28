@@ -139,7 +139,7 @@ func TestApproveHooksWithConfirm(t *testing.T) {
 	d := deps07(t, "", "FAKE_STATE="+state, "FAKE_LOG="+log)
 	f := startFlow(t, d, 140, 40)
 	f.send(runLineMsg{"approve"}).wait("api/deploy.sh", "web/deploy.sh", "muster.json", "risky command")
-	f.key("a").wait("Approve 3 files on this machine?", "contains a risky command")
+	f.key("a").wait("Approve 3 files on this computer?", "contains a risky command")
 	f.key("enter").wait("Hooks approved")
 	m, _ := f.end()
 	argv, _ := os.ReadFile(log)
@@ -442,7 +442,7 @@ func TestRecoveryTakesKeysAfterApprovalThenDeploy(t *testing.T) {
 	m.env.State.HookChanges = hookChangesFrom(m.env.State.Project, mustHooks(t, d))
 	f := startFlowModel(t, m, 120, 34)
 	f.send(runLineMsg{"deploy api web"}).wait("Approve hooks")
-	f.key("a").wait("on this machine?")
+	f.key("a").wait("on this computer?")
 	f.key("enter").wait("Likely cause")
 	fm, _ := f.end()
 	if d, ok := fm.screens["deploy"].(*deployScreen); !ok || d.phase != phFailed || fm.active != "deploy" {

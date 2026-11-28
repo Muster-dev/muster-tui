@@ -1316,7 +1316,7 @@ func diagnose(r *svcRun) []string {
 	case has("git pull failed"):
 		out = append(out, "git pull failed — commit or stash local changes, or check the remote.")
 	case r.exitCode == 127 || has("command not found"):
-		out = append(out, "The hook calls a command that isn't installed on this machine.")
+		out = append(out, "The hook calls a command that isn't installed on this computer.")
 	}
 	if r.timeout > 0 {
 		out = append(out, fmt.Sprintf("The hook ran longer than %ds. Raise deploy_timeout in `settings %s`, or look for a hung step.", r.timeout, r.key))

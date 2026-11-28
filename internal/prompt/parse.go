@@ -214,12 +214,12 @@ func validateArgs(p Parsed, ctx Context) error {
 	case ArgMachine:
 		if len(p.Args) != 1 {
 			if len(ctx.Machines) == 0 {
-				return &Error{Msg: "No fleet machines yet — `fleet add <name> <user@host>`"}
+				return &Error{Msg: "No servers yet — `fleet add <name> <user@host>`"}
 			}
-			return &Error{Msg: "Which machine? " + strings.Join(ctx.Machines, ", ")}
+			return &Error{Msg: "Which server? " + strings.Join(ctx.Machines, ", ")}
 		}
 		if !containsStr(ctx.Machines, p.Args[0]) {
-			e := &Error{Msg: fmt.Sprintf("There's no machine called `%s`", p.Args[0])}
+			e := &Error{Msg: fmt.Sprintf("There's no server called `%s`", p.Args[0])}
 			if s, ok := closest(p.Args[0], ctx.Machines); ok {
 				e.Suggestion = p.Cmd.Name + " " + s
 			}
@@ -227,10 +227,10 @@ func validateArgs(p Parsed, ctx Context) error {
 		}
 	case ArgTarget:
 		if len(p.Args) > 1 {
-			return &Error{Msg: fmt.Sprintf("`%s` takes one machine or group", p.Cmd.Name)}
+			return &Error{Msg: fmt.Sprintf("`%s` takes one server or group", p.Cmd.Name)}
 		}
 		if len(p.Args) == 1 && !containsStr(ctx.Machines, p.Args[0]) && !containsStr(ctx.Groups, p.Args[0]) {
-			e := &Error{Msg: fmt.Sprintf("There's no machine or group called `%s`", p.Args[0])}
+			e := &Error{Msg: fmt.Sprintf("There's no server or group called `%s`", p.Args[0])}
 			if s, ok := closest(p.Args[0], append(append([]string{}, ctx.Machines...), ctx.Groups...)); ok {
 				e.Suggestion = p.Cmd.Name + " " + s
 			}

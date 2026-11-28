@@ -95,14 +95,14 @@ func (s *approvalScreen) keys() []string {
 func (s *approvalScreen) confirmApprove() tea.Cmd {
 	n := len(s.changes)
 	body := []string{approvedFilesNote(s.keys(), 6),
-		"muster records the approval for this machine only (~/.muster/trust). Hooks run with your permissions."}
+		"muster records the approval for this computer only (~/.muster/trust). Hooks run with your permissions."}
 	for _, c := range s.changes {
 		if len(c.Dangerous) > 0 {
 			body = append(body, theme.GlyphWarn+" "+c.Label()+" contains a risky command: "+strings.Join(c.Dangerous, "; "))
 		}
 	}
 	return func() tea.Msg {
-		return confirmMsg{title: "Approve " + plural(n, "file") + " on this machine?", body: body, yes: "Approve",
+		return confirmMsg{title: "Approve " + plural(n, "file") + " on this computer?", body: body, yes: "Approve",
 			onYes: func() tea.Msg { return approveConfirmedMsg{} }}
 	}
 }
@@ -269,7 +269,7 @@ func (s *approvalScreen) diffLines(c config.HookChange) []string {
 	var lines []string
 	switch c.Kind {
 	case "new":
-		lines = append(lines, theme.Dim.Render("New — not approved on this machine yet"))
+		lines = append(lines, theme.Dim.Render("New — not approved on this computer yet"))
 		for _, l := range read(c.Path) {
 			lines = append(lines, "+"+l)
 		}
