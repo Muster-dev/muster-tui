@@ -334,7 +334,7 @@ func TestAskConsentStreamApproveFollowUp(t *testing.T) {
 	stdin, log := filepath.Join(dir, "stdin"), filepath.Join(dir, "argv")
 	m := signedIn(New(deps07(t, "consent", "FAKE_STDIN_LOG="+stdin, "FAKE_LOG="+log)))
 	f := startFlowModel(t, m, 120, 34)
-	f.send(runLineMsg{"ask why did api fail?"}).wait("Send redacted logs and config from acme-store", "y yes, send")
+	f.send(runLineMsg{"ask why did api fail?"}).wait("Send redacted logs and config from acme-store", "y send redacted data")
 	f.key("y").wait("free plan · 4 sessions left", "Let me check the current status first.", "Checking service status", "the database password is wrong", "Roll back api to the previous version", "Run this?")
 	f.key("y").wait("Approved: Roll back api", "Rolling back api", "Rolled back api", "Ask a follow-up")
 	f.send(keys("and web?")...)

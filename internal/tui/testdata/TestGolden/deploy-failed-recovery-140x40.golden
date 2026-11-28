@@ -1,5 +1,5 @@
- muster  acme-store  ⎇ main  ›  Deploy
- Deploy                                                                                                                                 0ms
+ muster  acme-store  ⎇ main  ›  Deploy                                                                                 ✕ redis failed · 0ms
+
   ✕ redis                                                                                                                               0ms
     ✕ run deploy.sh                                                                                                                     0ms
 
@@ -36,5 +36,5 @@
    │ failed to connect to the docker API at unix:///var/run/docker.sock
    Full log: /p/.muster/logs/redis-deploy.log · Ctrl+O
 
- [Retry]  Rollback   Skip   Abort    r · b · s · a
- redis failed — r retry · b rollback · s skip · a abort                                                             ? help  ctrl+k commands
+ [Retry]  Rollback   Skip   Abort
+ r retry · b rollback · s skip · a abort                                                                            ? help  ctrl+k commands

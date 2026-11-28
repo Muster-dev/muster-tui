@@ -1,9 +1,8 @@
- muster  ⎇ main  ›  Set up
- Set up sample-compose                                                                                         compose · docker-compose.yml
+ muster  ⎇ main  ›  Set up sample-compose                                                                      compose · docker-compose.yml
 
  Found 3 services. Health checks and order are a best guess — change anything.
 
-     #  SERVICE   KIND   HEALTH CHECK          CREDENTIALS
+     #  Service   Kind   Health check          Credentials
    ✓ 1  redis     infra  tcp :6379             off
    ✓ 2  api       build  http :8080 /          off
    ✓ 3  web       image  http :3000 /          off
@@ -37,4 +36,5 @@
 
 
 
- Enter choose · c create · e customize · Esc cancel                                                                 ? help  ctrl+k commands
+
+ enter choose · c create · e customize · esc cancel                                                                 ? help  ctrl+k commands

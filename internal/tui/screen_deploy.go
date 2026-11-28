@@ -138,10 +138,63 @@ func newDeploy(env *Env, services []string, dry, force, explicit bool) *deploySc
 func (d *deployScreen) Key() string      { return "deploy" }
 func (d *deployScreen) Persistent() bool { return true }
 func (d *deployScreen) Title() string {
-	if d.dry {
+	switch {
+	case d.dry:
 		return "Dry run"
+	case d.env.Fullscreen && d.cur < len(d.runs):
+		return "Deploy › Log · " + d.logRun().key
 	}
 	return "Deploy"
+}
+
+// logRun is the service whose log the full-screen view shows.
+func (d *deployScreen) logRun() *svcRun {
+	r := d.runs[d.cur]
+	if d.sel >= 0 && d.sel < len(d.runs) {
+		r = d.runs[d.sel]
+	}
+	return r
+}
+
+// Status: what's running and for how long, on the right of the header.
+func (d *deployScreen) Status() string {
+	if d.phase == phConfirm || d.dry {
+		if d.dry {
+			return theme.Dim.Render("nothing will change")
+		}
+		return ""
+	}
+	if d.env.Fullscreen && d.cur < len(d.runs) {
+		return theme.Dim.Render(plural(len(d.logRun().logs), "line"))
+	}
+	elapsed := ""
+	if !d.started.IsZero() {
+		end := d.env.Now()
+		if !d.ended.IsZero() {
+			end = d.ended
+		}
+		elapsed = dur(end.Sub(d.started))
+	}
+	switch d.phase {
+	case phRunning:
+		if d.cur < len(d.runs) {
+			r := d.runs[d.cur]
+			verb := "deploying"
+			for _, st := range r.steps {
+				if st.state == rsRunning {
+					verb = strings.TrimPrefix(st.label, "run ")
+				}
+			}
+			return theme.AccentFg.Render(d.env.Spin()+" "+r.key) + theme.Dim.Render(" · "+verb+" · "+elapsed)
+		}
+	case phRollingBack:
+		return theme.AccentFg.Render(d.env.Spin()+" rolling back") + theme.Dim.Render(" · "+elapsed)
+	case phFailed:
+		if d.cur < len(d.runs) {
+			return theme.Err.Render(theme.GlyphFail+" "+d.runs[d.cur].key+" failed") + theme.Dim.Render(" · "+elapsed)
+		}
+	}
+	return theme.Dim.Render(elapsed)
 }
 
 func (d *deployScreen) running() bool {
@@ -923,27 +976,10 @@ func (d *deployScreen) View(w, h int) string {
 	if d.dry {
 		return d.dryView(w, h)
 	}
-	now := d.env.Now()
-	title := "Deploy"
-	if d.cur < len(d.runs) && d.running() {
-		title += " · " + d.runs[d.cur].key
-	}
-	elapsed := ""
-	if !d.started.IsZero() {
-		end := now
-		if !d.ended.IsZero() {
-			end = d.ended
-		}
-		elapsed = theme.Dim.Render(dur(end.Sub(d.started)))
-	}
-	head := []string{spread(section(title), elapsed, w)}
+	head := []string{""}
 
 	if d.env.Fullscreen && d.cur < len(d.runs) {
-		r := d.runs[d.cur]
-		if d.sel >= 0 && d.sel < len(d.runs) {
-			r = d.runs[d.sel]
-		}
-		head[0] = spread(section("Log · "+r.key), theme.Dim.Render(fmt.Sprintf("%d lines", len(r.logs))), w)
+		r := d.logRun()
 		logs := r.logs
 		end := max(len(logs)-d.scroll, 0)
 		start := max(end-(h-1), 0)
@@ -1116,16 +1152,7 @@ func (d *deployScreen) recoveryLines(w int) []string {
 		}
 		btns = append(btns, button(label, i == d.choice))
 	}
-	keys := "r · b · s · a"
-	for _, c := range ch[len(recoveryChoices):] {
-		switch c {
-		case "Fix":
-			keys += " · f"
-		case "Explain with AI":
-			keys += " · e"
-		}
-	}
-	out = append(out, "", strings.Join(btns, " ")+"   "+theme.Dim.Render(keys))
+	out = append(out, "", strings.Join(btns, " "))
 	return out
 }
 
@@ -1156,7 +1183,7 @@ func (d *deployScreen) summaryLines(w int) []string {
 	default:
 		out = append(out, theme.Warning.Render(theme.GlyphWarn+" Finished with problems")+theme.Dim.Render(fmt.Sprintf(" — %d ok, %d failed, %d skipped%s", ok, failed, skipped, took)))
 	}
-	next := keyHint("Enter", "back") + theme.Dim.Render(" · ") + code("status")
+	next := theme.Dim.Render("Next: ") + code("status")
 	if len(d.runs) > 0 {
 		next += theme.Dim.Render(" · ") + code("logs "+d.runs[len(d.runs)-1].key)
 	}
@@ -1165,7 +1192,7 @@ func (d *deployScreen) summaryLines(w int) []string {
 }
 
 func (d *deployScreen) confirmView(w, h int) string {
-	lines := []string{section(fmt.Sprintf("Deploy %s", plural(len(d.runs), "service"))), ""}
+	lines := []string{"", fmt.Sprintf("Deploy %s, in this order:", plural(len(d.runs), "service")), ""}
 	for i, r := range d.runs {
 		meta := ""
 		if p := d.env.State.Project; p != nil {
@@ -1177,13 +1204,13 @@ func (d *deployScreen) confirmView(w, h int) string {
 		}
 		lines = append(lines, fmt.Sprintf(" %s  %s  %s", theme.Dim.Render(fmt.Sprintf("%d", i+1)), fit(r.key, 14), theme.Dim.Render(meta)))
 	}
-	lines = append(lines, "", theme.Dim.Render("In this order. A failure stops here and lets you retry, roll back or skip."), "",
-		keyHint("Enter", "deploy", "d", "dry run first", "Esc", "cancel"))
+	lines = append(lines, "")
+	lines = append(lines, wrapDim("A failure stops the deploy there and lets you retry, roll back or skip.", w)...)
 	return block(lines, w, h)
 }
 
 func (d *deployScreen) dryView(w, h int) string {
-	lines := []string{spread(section("Dry run"), theme.Dim.Render("nothing will change"), w), ""}
+	lines := []string{""}
 	for _, ev := range d.plan {
 		if ev.Event == "skipped" {
 			lines = append(lines, fmt.Sprintf(" %s %s %s", theme.Dim.Render(theme.GlyphSkip), fit(ev.Service, 14), theme.Dim.Render(skipText(ev.Reason))))
@@ -1202,10 +1229,8 @@ func (d *deployScreen) dryView(w, h int) string {
 		lines = append(lines, "")
 		if d.fatal != "" {
 			lines = append(lines, theme.Err.Render(theme.GlyphFail+" ")+d.fatal)
-			lines = append(lines, keyHint("Esc", "back"))
 		} else {
-			lines = append(lines, fmt.Sprintf("Plan: %s, in this order. Nothing was changed.", plural(len(d.plan), "service")), "")
-			lines = append(lines, keyHint("Enter", "deploy for real", "Esc", "back"))
+			lines = append(lines, fmt.Sprintf("Plan: %s, in this order. Nothing was changed.", plural(len(d.plan), "service")))
 		}
 	}
 	if d.phase == phAborted {
@@ -1214,39 +1239,40 @@ func (d *deployScreen) dryView(w, h int) string {
 	return block(lines, w, h)
 }
 
-func (d *deployScreen) Hint() string {
+func (d *deployScreen) Hint() string { return "" }
+
+func (d *deployScreen) Footer() []KeyHelp {
 	switch d.phase {
 	case phConfirm:
-		return keyHint("Enter", "start", "d", "dry run first", "Esc", "cancel")
+		return []KeyHelp{{"enter", "deploy"}, {"d", "dry run first"}, {"esc", "cancel"}}
 	case phRunning:
 		if d.dry {
-			return theme.AccentFg.Render(d.env.Spin()) + " Planning — " + keyHint("Esc", "cancel")
+			return []KeyHelp{{"esc", "cancel"}}
 		}
-		if d.cur < len(d.runs) {
-			r := d.runs[d.cur]
-			verb := "deploying"
-			for _, s := range r.steps {
-				if s.state == rsRunning {
-					verb = strings.TrimPrefix(s.label, "run ")
-				}
-			}
-			return theme.AccentFg.Render(d.env.Spin()) + " " + r.key + " — " + verb + theme.Dim.Render(" · ") + keyHint("Ctrl+O", "full log", "Esc", "cancel")
+		if d.env.Fullscreen {
+			return []KeyHelp{{"↑↓", "scroll"}, {"ctrl+o", "back to steps"}, {"esc", "cancel"}}
 		}
+		return []KeyHelp{{"ctrl+o", "full log"}, {"esc", "cancel"}}
 	case phRollingBack:
-		return theme.AccentFg.Render(d.env.Spin()) + " Rolling back — " + keyHint("Esc", "cancel")
+		return []KeyHelp{{"esc", "cancel"}}
 	case phFailed:
-		pairs := []string{"r", "retry", "b", "rollback", "s", "skip", "a", "abort"}
+		keys := []KeyHelp{{"r", "retry"}, {"b", "rollback"}, {"s", "skip"}, {"a", "abort"}}
 		for _, c := range d.choices()[len(recoveryChoices):] {
 			switch c {
 			case "Fix":
-				pairs = append(pairs, "f", "fix")
+				keys = append(keys, KeyHelp{"f", "fix"})
 			case "Explain with AI":
-				pairs = append(pairs, "e", "explain with AI")
+				keys = append(keys, KeyHelp{"e", "explain"})
 			}
 		}
-		return theme.Err.Render(d.runs[d.cur].key+" failed") + theme.Dim.Render(" — ") + keyHint(pairs...)
+		return keys
+	case phDone, phAborted:
+		if d.dry && d.fatal == "" && d.phase == phDone {
+			return []KeyHelp{{"enter", "deploy for real"}, {"esc", "back"}}
+		}
+		return []KeyHelp{{"enter/esc", "back"}, {"ctrl+o", "full log"}}
 	}
-	return ""
+	return nil
 }
 
 func (d *deployScreen) Keys() []KeyHelp {

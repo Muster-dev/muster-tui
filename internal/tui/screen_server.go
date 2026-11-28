@@ -77,7 +77,7 @@ func restartToast(server string, r fleet.RestartResult, err error) tea.Cmd {
 	}
 	return toast(lvlOK, "Restarted "+strings.Join(ok, ", ")+" on "+server)
 }
-func (s *serverScreen) Hint() string                     { return "" }
+func (s *serverScreen) Hint() string { return "" }
 
 func (s *serverScreen) machine() (fleet.Machine, bool) { return s.env.State.Fleet.Find(s.name) }
 

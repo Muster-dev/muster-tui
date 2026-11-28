@@ -199,12 +199,22 @@ func (f *form) Lines(w, labelW int, focused bool) []string {
 			}
 		}
 		line := cur + label + " " + val
-		if fl.err != "" {
+		var below string
+		switch {
+		case fl.err != "":
 			line += "  " + theme.Err.Render(theme.GlyphFail+" "+fl.err)
-		} else if i == f.sel && focused && fl.help != "" && !f.editing {
-			line += "  " + theme.Dim.Render(fl.help)
+		case i == f.sel && focused && fl.help != "" && !f.editing:
+			// The help goes on its own line when it wouldn't fit beside.
+			if width(line)+2+width(fl.help) <= w {
+				line += "  " + theme.Dim.Render(fl.help)
+			} else {
+				below = strings.Repeat(" ", labelW+3) + theme.Dim.Render(fl.help)
+			}
 		}
 		out = append(out, trunc(line, w))
+		if below != "" {
+			out = append(out, trunc(below, w))
+		}
 	}
 	return out
 }

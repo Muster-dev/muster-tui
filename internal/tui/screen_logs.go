@@ -50,7 +50,7 @@ type logsScreen struct {
 	// output: a one-shot command's output rather than a log; its lines are
 	// cleaned (no colour codes or box drawing) and its keys are simpler.
 	output bool
-	onEnd func(error) tea.Cmd
+	onEnd  func(error) tea.Cmd
 }
 
 type (

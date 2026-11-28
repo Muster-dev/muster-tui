@@ -409,9 +409,7 @@ func (s *askScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 		case "esc", "enter":
 			return s, func() tea.Msg { return backMsg{} }, true
 		case "n":
-			if s.phase == askDone {
-				return s, nav(newAsk(s.env, "")), true
-			}
+			return s, nav(newAsk(s.env, "")), true
 		case "l":
 			if s.errCode == "not_logged_in" || s.errCode == "unauthorized" {
 				return s, runLine("cloud login"), true
@@ -495,7 +493,8 @@ func (s *askScreen) transcript(w int) []string {
 	return out
 }
 
-func (s *askScreen) View(w, h int) string {
+// Status: plan and sessions left, on the right of the header.
+func (s *askScreen) Status() string {
 	right := ""
 	if s.plan != "" {
 		right = s.plan + " plan"
@@ -504,9 +503,13 @@ func (s *askScreen) View(w, h int) string {
 		right += " · " + s.left + " sessions left"
 	}
 	if s.readOnly {
-		right = strings.TrimPrefix(right+" · read-only", " · ")
+		right += " · read-only"
 	}
-	head := []string{spread(section("Muster Assistant"), theme.Dim.Render(right), w)}
+	return theme.Dim.Render(strings.TrimPrefix(right, " · "))
+}
+
+func (s *askScreen) View(w, h int) string {
+	head := []string{""}
 
 	var foot []string
 	switch s.phase {
@@ -518,7 +521,7 @@ func (s *askScreen) View(w, h int) string {
 		lines := append(head, "")
 		lines = append(lines, wrap("Send redacted logs and config from "+name+" to the Muster Assistant?", w)...)
 		lines = append(lines, "", theme.Dim.Render("Secrets, tokens and .env values are removed on this machine before anything is sent."),
-			theme.Dim.Render("Your answer is saved in .muster/assistant.json (kept out of git)."), "", keyHint("y", "yes, send", "n", "no"))
+			theme.Dim.Render("Your answer is saved in .muster/assistant.json (kept out of git)."))
 		return block(lines, w, h)
 	case askInput:
 		s.input.Width = w
@@ -553,8 +556,6 @@ func (s *askScreen) View(w, h int) string {
 		case "network_error":
 			foot = append(foot, theme.Dim.Render("  Check your connection and try again."))
 		}
-	case askDone:
-		foot = append(foot, rule(w), keyHint("n", "new question", "Esc", "back"))
 	}
 
 	body := s.transcript(w)
@@ -568,27 +569,32 @@ func (s *askScreen) View(w, h int) string {
 	return block(append(lines, foot...), w, h)
 }
 
-func (s *askScreen) Hint() string {
+func (s *askScreen) Hint() string { return "" }
+
+func (s *askScreen) Footer() []KeyHelp {
 	switch s.phase {
 	case askConsent:
-		return keyHint("y", "send redacted data", "n", "cancel — nothing is sent")
+		return []KeyHelp{{"y", "send redacted data"}, {"n", "cancel — nothing is sent"}}
 	case askInput:
-		return keyHint("Enter", "ask", "Esc", "back")
+		return []KeyHelp{{"enter", "ask"}, {"esc", "back"}}
 	case askApproval:
-		return theme.Warning.Render("The assistant wants to run an action") + theme.Dim.Render(" — ") + keyHint("y", "run it", "n", "decline")
+		return []KeyHelp{{"y", "run it"}, {"n", "decline"}}
 	case askRunning:
-		return theme.AccentFg.Render(s.env.Spin()) + " Assistant is working — " + keyHint("Esc", "stop")
+		return []KeyHelp{{"pgup", "scroll"}, {"esc", "stop"}}
 	case askWaiting:
-		return keyHint("Enter", "send / finish", "PgUp", "scroll", "Esc", "finish")
+		return []KeyHelp{{"enter", "send / finish"}, {"pgup", "scroll"}, {"esc", "finish"}}
 	case askFailed:
 		switch s.errCode {
 		case "not_logged_in", "unauthorized":
-			return keyHint("l", "cloud login", "Esc", "back")
+			return []KeyHelp{{"l", "cloud login"}, {"esc", "back"}}
 		case "payment_required":
-			return keyHint("c", "copy upgrade link", "Esc", "back")
+			return []KeyHelp{{"c", "copy upgrade link"}, {"esc", "back"}}
 		}
+		return []KeyHelp{{"n", "try again"}, {"esc", "back"}}
+	case askDone:
+		return []KeyHelp{{"n", "new question"}, {"pgup", "scroll"}, {"esc", "back"}}
 	}
-	return ""
+	return nil
 }
 
 func (s *askScreen) Keys() []KeyHelp {
