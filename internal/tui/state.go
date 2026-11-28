@@ -14,6 +14,7 @@ import (
 	"github.com/Muster-dev/muster-tui/internal/docker"
 	"github.com/Muster-dev/muster-tui/internal/engine"
 	"github.com/Muster-dev/muster-tui/internal/fleet"
+	"github.com/Muster-dev/muster-tui/internal/proc"
 	"github.com/Muster-dev/muster-tui/internal/prompt"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -251,6 +252,10 @@ type (
 		err error
 		fix bool
 	}
+	fleetHelpMsg struct {
+		out string
+		err error
+	}
 	versionMsg struct {
 		out string
 		err error
@@ -351,7 +356,13 @@ func (s *State) apply(msg tea.Msg, now time.Time) bool {
 		}
 	case versionMsg:
 		if m.err == nil {
-			s.Caps = engine.CapsFor(m.out)
+			c := engine.CapsFor(m.out)
+			c.FleetHelpKnown, c.FleetTestJSON, c.FleetLogs, c.FleetRestart = s.Caps.FleetHelpKnown, s.Caps.FleetTestJSON, s.Caps.FleetLogs, s.Caps.FleetRestart
+			s.Caps = c
+		}
+	case fleetHelpMsg:
+		if m.err == nil {
+			s.Caps = s.Caps.WithFleetHelp(m.out)
 		}
 	case hooksMsg:
 		if m.err == nil {
@@ -524,6 +535,21 @@ func (e *Env) loadVersion() tea.Cmd {
 	_, cmd := e.Tasks.Run("checking muster version", "", false, func(ctx context.Context) tea.Msg {
 		out, err := eng.Version(ctx)
 		return versionMsg{out, err}
+	})
+	return cmd
+}
+
+// loadFleetHelp reads `muster fleet --help` to see which fleet commands
+// the CLI has (fleet test --json, fleet logs, fleet restart land between
+// releases). It's local and quick.
+func (e *Env) loadFleetHelp() tea.Cmd {
+	eng := e.Engine
+	if eng == nil {
+		return nil
+	}
+	_, cmd := e.Tasks.Run("checking muster version", "", false, func(ctx context.Context) tea.Msg {
+		out, err := proc.Output(eng.Command(ctx, "fleet", "--help"))
+		return fleetHelpMsg{string(out), err}
 	})
 	return cmd
 }

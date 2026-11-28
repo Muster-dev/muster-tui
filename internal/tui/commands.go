@@ -300,7 +300,12 @@ func (m *Model) run(p prompt.Parsed) tea.Cmd {
 			return m.setToast(lvlWarn, mc.Name+" connects through Fleet Cloud, so there's no SSH shell — try fleet status "+mc.Name)
 		}
 		return m.execProcess(fleet.SSHCmd(mc), func(err error) tea.Msg { return execDone("SSH to "+mc.Name, err) })
-	case "fleet deploy", "fleet status", "fleet test", "fleet rollback":
+	case "fleet status", "fleet test":
+		if c := m.needEngine(); c != nil {
+			return c
+		}
+		return m.open(newFleetResult(e, strings.TrimPrefix(p.Cmd.Name, "fleet "), strings.Join(p.Args, " ")))
+	case "fleet deploy", "fleet rollback":
 		if c := m.needEngine(); c != nil {
 			return c
 		}

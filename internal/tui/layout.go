@@ -87,13 +87,23 @@ func (m Model) headerView() string {
 	}
 	centerTxt := m.summaryText()
 	var right []string
-	if n := m.env.Tasks.Len(); n > 0 {
-		label := ""
-		if t := m.env.Tasks.List(); len(t) > 0 {
-			label = t[0].Label
-			if n > 1 {
-				label += fmt.Sprintf(" +%d", n-1)
-			}
+	if sr, ok := m.activeScreen().(Statuser); ok && m.overlay == nil {
+		if st := sr.Status(); st != "" {
+			right = append(right, st)
+			centerTxt = ""
+		}
+	}
+	// Background work; the active screen shows its own tasks in its body.
+	var others []*Task
+	for _, t := range m.env.Tasks.List() {
+		if t.Owner == "" || t.Owner != m.active {
+			others = append(others, t)
+		}
+	}
+	if n := len(others); n > 0 {
+		label := others[0].Label
+		if n > 1 {
+			label += fmt.Sprintf(" +%d", n-1)
 		}
 		right = append(right, theme.AccentFg.Render(m.env.Spin())+" "+theme.Dim.Render(trunc(label, 24)))
 	}
@@ -270,10 +280,19 @@ func (m Model) footerLeft() string {
 func (m Model) hintRow(keys []KeyHelp) string {
 	var parts []string
 	for _, k := range keys {
-		parts = append(parts, m.env.mark("key:"+k.Key, theme.Key.Render(k.Key)+" "+theme.Dim.Render(k.Desc)))
+		// "enter/esc" replays its first key.
+		id := k.Key
+		if i := strings.Index(id, "/"); i > 0 {
+			id = id[:i]
+		}
+		parts = append(parts, m.env.mark("key:"+id, theme.Key.Render(k.Key)+" "+theme.Dim.Render(k.Desc)))
 	}
 	return strings.Join(parts, theme.Dim.Render(" · "))
 }
+
+// Statuser screens show a short status on the right of the header line
+// ("✓ done", "● following"), so they never repeat their title in the body.
+type Statuser interface{ Status() string }
 
 // Footerer screens list their footer hints (at most ~5, most useful first).
 type Footerer interface{ Footer() []KeyHelp }

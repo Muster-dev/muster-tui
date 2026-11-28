@@ -1,4 +1,4 @@
- muster  acme-store  ⎇ main  ›  Deploy                          ⠹ deploying api
+ muster  acme-store  ⎇ main  ›  Deploy
  Deploy · api                                                               0ms
   ⠹ api                                                                     0ms
     ✓ git pull origin/main                                                  0ms

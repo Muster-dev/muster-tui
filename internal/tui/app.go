@@ -94,7 +94,7 @@ func (m Model) Init() tea.Cmd {
 		// the dashboard fills in first.
 		cmds = append(cmds, m.env.loadStatus(), m.env.loadHistory())
 	}
-	cmds = append(cmds, m.env.loadDocker(), m.env.loadFleet(), tickRefresh(), tickFleet())
+	cmds = append(cmds, m.env.loadDocker(), m.env.loadFleet(), m.env.loadFleetHelp(), tickRefresh(), tickFleet())
 	if !m.env.State.Caps.Known {
 		cmds = append(cmds, m.env.loadVersion())
 	}
