@@ -302,6 +302,9 @@ func (m Model) footerView() string {
 // footerRight is the hints and, when there's room, ? help and ctrl+k.
 func (m Model) footerRight() string {
 	hints := m.footerHints()
+	if m.overlay != nil && hints != "" {
+		return hints // the popup's own keys say how to close it
+	}
 	right := m.env.mark("key:ctrl+k", theme.Key.Render("ctrl+k")+theme.Dim.Render(" commands"))
 	if m.w >= 90 {
 		right = m.env.mark("key:?", theme.Key.Render("?")+theme.Dim.Render(" help")) + theme.Dim.Render("  ") + right

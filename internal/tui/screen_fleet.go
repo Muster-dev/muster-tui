@@ -475,7 +475,7 @@ func (s *fleetResultScreen) statusSummary() string {
 	online := 0
 	for _, ms := range s.status {
 		if ms.Reachable && ms.Error != "unpaired" {
-
+			online++
 		}
 	}
 	switch {

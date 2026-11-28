@@ -133,3 +133,16 @@ func TestCleanOutputStripsBoxesAndSaysServer(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+func TestFleetStatusCardCountsOnlineServers(t *testing.T) {
+	m := New(fleetDeps(t, true))
+	s := newFleetResult(m.env, "status", "")
+	s.status = []fleet.MachineStatus{byrickyHealth.st[0], {Machine: "edge", Reachable: false}}
+	if got := s.statusSummary(); got != "1 of 2 online" {
+		t.Fatalf("summary %q", got)
+	}
+	s.status = s.status[:1]
+	if got := s.statusSummary(); got != "Online" || !s.allOnline() {
+		t.Fatalf("summary %q", got)
+	}
+}
