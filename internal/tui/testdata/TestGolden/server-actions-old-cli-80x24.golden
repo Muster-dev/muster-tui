@@ -1,0 +1,24 @@
+ muster  ⎇ main  ›  Servers › byricky                    ● Online · 2/2 healthy
+
+ Fleet Cloud · agent ricky@agent-byricky
+ Runs muster on the server · muster 0.7.1
+
+ Services
+ ● pond    healthy
+ ● web     healthy
+
+ Actions
+ ▸ Deploy           d   muster fleet deploy byricky
+   Status           s   muster fleet status byricky
+   Test connection  t   muster fleet test byricky
+   Rollback         b   muster fleet rollback byricky
+   Logs             l   needs a newer muster — run muster update
+   Restart          R   needs a newer muster — run muster update
+   Ask assistant    a   needs a project folder (muster.json)
+
+
+
+
+
+
+ enter run · d deploy · s status · esc back                     ctrl+k commands

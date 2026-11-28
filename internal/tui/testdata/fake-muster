@@ -99,5 +99,34 @@ deploy)
     ;;
   esac
   ;;
+fleet)
+  fx="$(cd "$(dirname "$0")/../../fleet/testdata" && pwd)"
+  case "$2" in
+  --help)
+    echo "Info:"
+    echo "  list [--json]                 Show machines, groups, status"
+    if [ -n "$FAKE_FLEET_NEW" ]; then
+      echo "  test [target] [--json]        Test connectivity (SSH or cloud)"
+      echo "  logs <server> <service> [--tail N] [--json]"
+      echo "  restart <server> [service...] --yes [--json]"
+    else
+      echo "  test [name|group]             Test connectivity (SSH or cloud)"
+    fi
+    ;;
+  test)
+    case " $* " in
+    *" --json "*) cat "$fx/fleet-test.json"; exit 1 ;;
+    *) cat "$fx/fleet-test-mixed.txt" ;;
+    esac
+    ;;
+  logs)
+    echo "{\"event\":\"log\",\"service\":\"$4\",\"line\":\"GET / 200 3ms\"}"
+    echo "{\"event\":\"log\",\"service\":\"$4\",\"line\":\"ERROR upstream timed out\"}"
+    ;;
+  restart)
+    echo "{\"server\":\"$3\",\"results\":[{\"service\":\"web\",\"ok\":true,\"error\":\"\"}]}"
+    ;;
+  esac
+  ;;
 *) echo "Unknown command: $1" >&2; exit 1 ;;
 esac

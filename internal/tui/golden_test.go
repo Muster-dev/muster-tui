@@ -68,6 +68,36 @@ func scenarios() []scenario {
 			wide:  []string{"3.10%"},
 		},
 		{
+			name:  "fleet-test-json",
+			deps:  func(t *testing.T) Deps { return fleetDeps(t, true) },
+			send:  []tea.Msg{fleetHelp(true), fleetFixture, runLineMsg{"fleet test"}},
+			until: []string{"1 of 2 failed", "r run again"},
+		},
+		{
+			name:  "fleet-test-text",
+			deps:  func(t *testing.T) Deps { return fleetDeps(t, false) },
+			send:  []tea.Msg{fleetHelp(false), fleetFixture, runLineMsg{"fleet test"}},
+			until: []string{"2 of 4 failed", "r run again"},
+		},
+		{
+			name:  "server-actions",
+			deps:  func(t *testing.T) Deps { return fleetDeps(t, true) },
+			send:  []tea.Msg{fleetHelp(true), fleetFixture, byrickyHealth, runLineMsg{"server byricky"}},
+			until: []string{"Restart", "muster 0.7.1"},
+		},
+		{
+			name:  "server-actions-old-cli",
+			deps:  func(t *testing.T) Deps { return fleetDeps(t, false) },
+			send:  []tea.Msg{fleetHelp(false), fleetFixture, byrickyHealth, runLineMsg{"server byricky"}},
+			until: []string{"Restart", "newer muster"},
+		},
+		{
+			name:  "settings",
+			deps:  baseDeps,
+			send:  []tea.Msg{runLineMsg{"settings"}},
+			until: []string{"Colour"},
+		},
+		{
 			name: "onboarding",
 			deps: func(t *testing.T) Deps {
 				dir, _ := filepath.Abs("testdata/sample-compose")

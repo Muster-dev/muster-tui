@@ -171,23 +171,11 @@ func (s *fleetResultScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 	return s, nil, false
 }
 
-// Status is shown on the right of the header.
+// Status is shown on the right of the header: only a failure to run, since
+// the card's own summary line says how the servers did.
 func (s *fleetResultScreen) Status() string {
-	switch {
-	case s.running:
-		return ""
-	case s.err != nil:
+	if !s.running && s.err != nil {
 		return theme.Err.Render(theme.GlyphFail + " failed")
-	case s.test != nil:
-		if s.test.Failed > 0 || s.pairing() > 0 {
-			return theme.Warning.Render(theme.GlyphWarn + " " + s.testSummary())
-		}
-		return theme.OK.Render(theme.GlyphOK + " passed")
-	case s.status != nil:
-		if sum := s.statusSummary(); strings.HasSuffix(sum, "nline") && !strings.Contains(sum, " of ") {
-			return theme.OK.Render(theme.GlyphHealthy + " " + strings.ToLower(sum))
-		}
-		return theme.Warning.Render(theme.GlyphWarn + " " + s.statusSummary())
 	}
 	return ""
 }

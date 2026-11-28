@@ -107,7 +107,7 @@ func (s *serverScreen) actions() []serverAct {
 	ask := serverAct{id: "ask", label: "Ask assistant", key: "a", what: "Muster Assistant, about this server"}
 	switch {
 	case !s.env.HasProject():
-		ask.why = "needs a project folder — muster ask reads its muster.json"
+		ask.why = "needs a project folder (muster.json)"
 	case !s.env.State.Cloud.HasToken:
 		ask.why = "needs Fleet Cloud — sign in with cloud login"
 	}
@@ -130,7 +130,7 @@ func (s *serverScreen) logsAct(ss serverState) serverAct {
 	a := serverAct{id: "logs", label: "Logs", key: "l", what: "recent log lines from a service on the server"}
 	switch {
 	case !s.env.State.Caps.FleetLogs:
-		a.why = "needs a newer muster (fleet logs) — run muster update"
+		a.why = "needs a newer muster — run muster update"
 	case ss.Pairing:
 		a.why = "pair the server first"
 	case ss.Offline:
@@ -147,7 +147,7 @@ func (s *serverScreen) restartAct(ss serverState) serverAct {
 	a := serverAct{id: "restart", label: "Restart", key: "R", what: "restart services on the server (asks first)"}
 	switch {
 	case !s.env.State.Caps.FleetRestart:
-		a.why = "needs a newer muster (fleet restart) — run muster update"
+		a.why = "needs a newer muster — run muster update"
 	case ss.Pairing:
 		a.why = "pair the server first"
 	case ss.Offline:

@@ -426,7 +426,13 @@ func (s *settingsScreen) View(w, h int) string {
 		if s.current() == "global" && s.globalErr != nil {
 			right = append(right, theme.Err.Render(theme.GlyphFail+" settings.json: "+s.globalErr.Error()), "")
 		}
-		right = append(right, s.form.Lines(fw, clamp(fw/3, 14, 22), true)...)
+		labelW := 14
+		for _, f := range s.form.fields {
+			if f.kind != fHeading {
+				labelW = max(labelW, width(f.label))
+			}
+		}
+		right = append(right, s.form.Lines(fw, min(labelW, fw/2), true)...)
 	}
 	if n := len(s.errs); n > 0 && s.current() != "global" {
 		right = append(right, "", theme.Err.Render(fmt.Sprintf("%s %s", theme.GlyphFail, plural(n, "problem"))))
