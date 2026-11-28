@@ -40,7 +40,7 @@ func (e *Env) serverStatus(mc fleet.Machine) serverState {
 		out.Detail = firstNonEmpty(hs.Error, "Can't reach it")
 	case ok && hs.Error == "unpaired", !ok && mc.Paired != nil && !*mc.Paired && mc.Mode == "muster":
 		out = serverState{Glyph: theme.Warning.Render(theme.GlyphWarn), Word: theme.Warning.Render(srvPairing), Pairing: true}
-		out.Detail = "muster on this server doesn't trust this computer yet — press p to pair"
+		out.Detail = "This computer isn't paired with it yet — press p to pair"
 	case ok:
 		out = serverState{Glyph: theme.OK.Render(theme.GlyphHealthy), Word: theme.OK.Render(srvOnline)}
 		if hs.Error != "" {

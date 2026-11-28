@@ -191,12 +191,12 @@ func (s *serverScreen) View(w, h int) string {
 }
 
 func (s *serverScreen) serviceLines(w int, ss serverState) []string {
+	if ss.Pairing {
+		return []string{theme.Dim.Render("Pair the server to see its services.")}
+	}
 	if ss.Status == nil {
 		if s.env.CheckingServers() {
 			return []string{theme.AccentFg.Render(s.env.Spin()) + theme.Dim.Render(" asking the server…")}
-		}
-		if ss.Pairing {
-			return []string{theme.Dim.Render("Pair the server to see its services.")}
 		}
 		return []string{theme.Dim.Render("Not checked yet — press r")}
 	}

@@ -377,10 +377,7 @@ func (s *serversScreen) listLines(w int, compact bool) []string {
 func (s *serversScreen) statusLine() string {
 	st := s.env.State
 	now := s.env.Now()
-	switch {
-	case s.env.CheckingServers():
-		return theme.AccentFg.Render(s.env.Spin()) + theme.Dim.Render(" checking")
-	case !st.FleetHealthAt.IsZero():
+	if !st.FleetHealthAt.IsZero() {
 		return theme.Dim.Render("checked " + ago(st.FleetHealthAt, now))
 	}
 	return ""

@@ -152,16 +152,6 @@ func paletteItems(env *Env, active Screen, hist *prompt.History) []paletteItem {
 		}
 	}
 
-	// What the screen you're on can do.
-	if active != nil {
-		for _, k := range active.Keys() {
-			if !replayable(k.Key) {
-				continue
-			}
-			add(paletteItem{group: "This screen", label: capitalize(k.Desc), keys: k.Key, replay: k.Key})
-		}
-	}
-
 	proj := st.Project != nil
 	type act struct {
 		label, desc, line, keys string
@@ -218,6 +208,16 @@ func paletteItems(env *Env, active Screen, hist *prompt.History) []paletteItem {
 	if proj {
 		for _, k := range st.ServiceKeys() {
 			add(paletteItem{group: "Services", label: "Open " + k, desc: "health, config and recent deploys", line: "open " + k})
+		}
+	}
+
+	// What the screen you're on can do.
+	if active != nil {
+		for _, k := range active.Keys() {
+			if !replayable(k.Key) {
+				continue
+			}
+			add(paletteItem{group: "This screen", label: capitalize(k.Desc), keys: k.Key, replay: k.Key})
 		}
 	}
 
