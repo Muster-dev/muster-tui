@@ -71,18 +71,18 @@ func (c *confirm) Click(id string) (overlay, tea.Cmd) {
 }
 
 func (c *confirm) lines(w int) []string {
-	lines := []string{"", " " + theme.Title.Render(c.msg.title), ""}
+	lines := []string{theme.Title.Render(c.msg.title), ""}
 	for _, b := range c.msg.body {
-		for _, l := range wrap(b, w-3) {
-			lines = append(lines, " "+theme.Dim.Render(l))
+		for _, l := range wrap(b, w) {
+			lines = append(lines, theme.Dim.Render(l))
 		}
 	}
 	yes := firstNonEmpty(c.msg.yes, "Confirm")
-	return append(lines, "", " "+c.env.mark("ov:yes", button(yes, c.yes))+"  "+c.env.mark("ov:no", button("Cancel", !c.yes)), "")
+	return append(lines, "", c.env.mark("ov:yes", button(yes, c.yes))+"  "+c.env.mark("ov:no", button("Cancel", !c.yes)))
 }
 
 func (c *confirm) Size(bw, bh int) (int, int) {
-	w := min(64, bw-4)
+	w := min(60, bw-8)
 	return w, min(len(c.lines(w)), bh-2)
 }
 
@@ -505,22 +505,22 @@ func (p *palette) runLine(line string) (overlay, tea.Cmd) {
 }
 
 func (p *palette) Size(bw, bh int) (int, int) {
-	want := len(p.shown) + 3 // input, rule, footer
+	want := len(p.shown) + 4 // input, gap, gap, footer
 	if len(p.shown) == 0 {
 		want++
 	}
 	if p.errMsg != "" {
 		want++
 	}
-	return clamp(bw-4, 20, 76), clamp(want, 6, min(20, bh-2))
+	return clamp(bw-10, 20, 76), clamp(want, 6, min(20, bh-6))
 }
 
 func (p *palette) View(w, h int) string {
 	p.input.Width = w - 4
-	lines := []string{" " + theme.AccentFg.Render(theme.GlyphPrompt) + " " + p.input.View(), theme.Rule.Render(strings.Repeat("─", w))}
-	foot := 1
+	lines := []string{paint(" "+theme.AccentFg.Render(theme.GlyphPrompt)+" "+p.input.View(), w, bgSeq(theme.Element)), ""}
+	foot := 2
 	if p.errMsg != "" {
-		foot = 2
+		foot = 3
 	}
 	rows := max(h-len(lines)-foot, 1)
 	p.rows = rows
@@ -539,7 +539,7 @@ func (p *palette) View(w, h int) string {
 	for i := p.top; i < len(p.shown) && i < p.top+rows; i++ {
 		it := p.shown[i]
 		if it.header {
-			lines = append(lines, " "+theme.Dim.Render(it.label))
+			lines = append(lines, theme.Dim.Render(it.label))
 			continue
 		}
 		descW := max(w-labelW-keyW-6, 0)
@@ -549,7 +549,7 @@ func (p *palette) View(w, h int) string {
 		}
 		row := fit(label+"  "+theme.Dim.Render(fit(it.desc, descW)), w-keyW-3) + " " + fitLeft(theme.Key.Render(it.keys), keyW)
 		if i == p.sel {
-			row = theme.AccentFg.Render(theme.GlyphCursor) + theme.Selected.Render(fit(" "+fit(it.label, labelW)+"  "+fit(it.desc, descW), w-keyW-2)+" "+fitLeft(it.keys, keyW))
+			row = band(theme.Title.Render(fit(it.label, labelW))+"  "+fit(it.desc, descW)+" "+fitLeft(theme.Key.Render(it.keys), keyW), w)
 		} else {
 			row = "  " + row
 		}
@@ -568,7 +568,7 @@ func (p *palette) View(w, h int) string {
 		}
 		lines = append(lines, trunc(msg, w))
 	}
-	lines = append(lines, " "+keyHint("↑↓", "move", "enter", "run", "tab", "complete", "esc", "close"))
+	lines = append(lines, "", keyHint("↑↓", "move", "enter", "run", "tab", "complete", "esc", "close"))
 	return block(lines, w, h)
 }
 
@@ -623,7 +623,7 @@ var mouseHelp = []string{
 	"Turn the mouse off: --no-mouse or tui_mouse: off",
 }
 
-func (hp *help) Size(bw, bh int) (int, int) { return clamp(bw-4, 20, 100), max(bh-2, 4) }
+func (hp *help) Size(bw, bh int) (int, int) { return clamp(bw-10, 20, 100), max(bh-6, 4) }
 
 func (hp *help) View(w, h int) string {
 	var left, right []string
@@ -664,15 +664,15 @@ func (hp *help) View(w, h int) string {
 			if i < len(right) {
 				r = right[i]
 			}
-			lines = append(lines, " "+fit(l, colW)+"  "+r)
+			lines = append(lines, fit(l, colW)+"    "+r)
 		}
 	} else {
 		for _, l := range left {
-			lines = append(lines, " "+l)
+			lines = append(lines, l)
 		}
 		lines = append(lines, "")
 		for _, r := range right {
-			lines = append(lines, " "+r)
+			lines = append(lines, r)
 		}
 	}
 	hp.top = clamp(hp.top, 0, max(len(lines)-h, 0))

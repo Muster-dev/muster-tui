@@ -19,14 +19,19 @@ import (
 var Static bool
 
 var (
-	Accent  = lipgloss.AdaptiveColor{Light: "#9A7400", Dark: "#E8B931"}
-	Text    = lipgloss.AdaptiveColor{Light: "#1F1F1F", Dark: "#E6E6E6"}
-	Muted   = lipgloss.AdaptiveColor{Light: "#6B6B6B", Dark: "#8A8A8A"}
-	Faint   = lipgloss.AdaptiveColor{Light: "#A8A8A8", Dark: "#4A4A4A"}
-	Good    = lipgloss.AdaptiveColor{Light: "#1E7D32", Dark: "#7BC67E"}
-	Bad     = lipgloss.AdaptiveColor{Light: "#C62828", Dark: "#EF6B6B"}
-	Warn    = lipgloss.AdaptiveColor{Light: "#A15C00", Dark: "#F0A84A"}
-	SelBg   = lipgloss.AdaptiveColor{Light: "#F3E7C0", Dark: "#3A3222"}
+	Accent = lipgloss.AdaptiveColor{Light: "#9A7400", Dark: "#E8B931"}
+	Text   = lipgloss.AdaptiveColor{Light: "#1F1F1F", Dark: "#E6E6E6"}
+	Muted  = lipgloss.AdaptiveColor{Light: "#6B6B6B", Dark: "#8A8A8A"}
+	Faint  = lipgloss.AdaptiveColor{Light: "#A8A8A8", Dark: "#4A4A4A"}
+	Good   = lipgloss.AdaptiveColor{Light: "#1E7D32", Dark: "#7BC67E"}
+	Bad    = lipgloss.AdaptiveColor{Light: "#C62828", Dark: "#EF6B6B"}
+	Warn   = lipgloss.AdaptiveColor{Light: "#A15C00", Dark: "#F0A84A"}
+	SelBg  = lipgloss.AdaptiveColor{Light: "#F3E7C0", Dark: "#3A3222"}
+	// Surface is a raised panel (cards, dialogs, the palette, toasts): a
+	// filled background one step off the terminal's, instead of a border.
+	Surface = lipgloss.AdaptiveColor{Light: "#F2F0EB", Dark: "#232220"}
+	// Element sits on a surface (a selected row's band, an input).
+	Element = lipgloss.AdaptiveColor{Light: "#E6E2D8", Dark: "#302E2A"}
 	AddLine = lipgloss.AdaptiveColor{Light: "#1E7D32", Dark: "#7BC67E"}
 	DelLine = lipgloss.AdaptiveColor{Light: "#C62828", Dark: "#EF6B6B"}
 )

@@ -631,3 +631,6 @@ func shortPath(p string) string {
 	}
 	return filepath.Base(p)
 }
+
+// Wide: tables and log streams use the whole width.
+func (s *logsScreen) Wide() bool { return true }

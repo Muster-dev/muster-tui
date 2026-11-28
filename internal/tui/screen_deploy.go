@@ -1360,3 +1360,6 @@ func relPath(env *Env, p string) string {
 	}
 	return p
 }
+
+// Wide: tables and log streams use the whole width.
+func (d *deployScreen) Wide() bool { return true }

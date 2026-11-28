@@ -525,3 +525,6 @@ func (s *dockerScreen) Keys() []KeyHelp {
 		{"p", "pull image"}, {"P", "prune (shows reclaimable space)"}, {"R", "refresh"},
 	}
 }
+
+// Wide: tables and log streams use the whole width.
+func (s *dockerScreen) Wide() bool { return true }

@@ -175,3 +175,6 @@ func (s *historyScreen) Footer() []KeyHelp {
 func (s *historyScreen) Keys() []KeyHelp {
 	return []KeyHelp{{"j / k", "move"}, {"s", "filter by service"}, {"f", "filter by result"}, {"a", "filter by action"}, {"c", "clear filters"}, {"Enter", "open the service"}, {"R", "reload"}}
 }
+
+// Wide: tables and log streams use the whole width.
+func (s *historyScreen) Wide() bool { return true }

@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 
+	"github.com/Muster-dev/muster-tui/internal/theme"
+
 	tea "github.com/charmbracelet/bubbletea"
 	zone "github.com/lrstanley/bubblezone"
 )
@@ -75,3 +77,17 @@ type Clicker interface {
 
 // zoneArg returns the part of id after prefix ("row:3" → "3").
 func zoneArg(id, prefix string) (string, bool) { return strings.CutPrefix(id, prefix) }
+
+// hints renders "key label · key label" with each hint clickable (the root
+// replays the key), for action rows inside a screen.
+func (e *Env) hints(keys []KeyHelp) string {
+	var parts []string
+	for _, k := range keys {
+		id := k.Key
+		if i := strings.Index(id, "/"); i > 0 {
+			id = id[:i]
+		}
+		parts = append(parts, e.mark("key:"+id, theme.Key.Render(k.Key)+" "+theme.Dim.Render(k.Desc)))
+	}
+	return strings.Join(parts, theme.Dim.Render("  ·  "))
+}
