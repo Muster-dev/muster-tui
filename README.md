@@ -1,27 +1,23 @@
 # muster-tui
 
 The interactive terminal UI for [muster](https://github.com/Muster-dev/muster).
-Type `muster` in a project and this is what you get: a calm full-screen app
-with your services, servers and Docker on the left, the current task in the
-middle, and a prompt at the bottom that understands what you mean.
+Type `muster` in a project (or anywhere, to manage your servers) and this is
+what you get: a calm full-screen app with one header line, the screen you're
+on, and a footer of clickable hints. `ctrl+k` opens a command palette for
+everything else.
 
 ```
- muster  acme-store  main            2 healthy · 1 unhealthy            ⠹ deploying api
-────────────────────────────────────────────────────────────────────────────────────────
- Services                  │ Deploy · api                                          12s
- ● redis      tcp :6379    │  ✓ redis                                              3.1s
- ⠹ api        deploying    │  ⠹ api
- ✕ web        http :3000   │    ✓ git pull origin/main                             0.8s
- ○ worker     no check     │    ⠹ run deploy.sh                                    8.2s
-                           │      │ #9 [build 5/6] RUN npm run build
- Servers                   │  · web
- ○ prod-1     ssh muster   │
-                           │
- Docker                    │
- 5/7 running · 2.1GB       │
-────────────────────────────────────────────────────────────────────────────────────────
- ⠹ api — deploy.sh · Ctrl+O full log · Esc cancel
- › logs web                                                     Tab complete · Enter run
+ muster  ⎇ site-refresh                                                  ● Fleet Cloud
+ Servers                                                               checked just now
+
+   Server      Status           Connection                         Services
+ ▸ 10-0-2-100  ! Needs pairing  SSH · muster@10.0.2.100            press p
+   byricky     ● Online         Fleet Cloud                        1/1 healthy
+   muster      ● Online         SSH · muster@10.0.2.100            —
+
+ 10-0-2-100: This computer isn't paired with it yet — press p to pair
+
+ enter open · d deploy · p pair · a add server · r refresh      ctrl+k commands
 ```
 
 The bash `muster` CLI stays the engine and the headless interface. muster-tui
@@ -62,11 +58,18 @@ muster-tui -C ~/src/acme-store
 Switch back to the classic bash menus with `muster settings --global tui_mode bash`
 (or in Settings → Global → Interactive UI).
 
-### The prompt
+### Commands (ctrl+k)
 
-Type commands as words; `/deploy` works too. Tab completes commands,
-services, machines and containers; anything unrecognised gets a
-"did you mean" you can accept with Tab.
+`ctrl+k` (or `/` or `:`) opens the palette. Type to fuzzy-search actions
+("Deploy", "Logs", "Add server"…), servers ("Go to byricky"), services and
+combinations ("deploy byr" → Deploy byricky). You can also type a command as
+words; `/deploy` works too. Tab completes services, servers and containers,
+and anything it doesn't recognise gets a "did you mean" you accept with Tab.
+Your last commands are listed first.
+
+macOS terminals keep ⌘K for themselves (Terminal and iTerm2 clear the screen),
+so muster-tui can only see `ctrl+k`. If your terminal can forward ⌘K as
+ctrl+k, it works too. In Ghostty that's `keybind = cmd+k=text:\x0b`.
 
 | Command | What it does |
 |---|---|
@@ -84,9 +87,11 @@ services, machines and containers; anything unrecognised gets a
 | `doctor [--fix]` | Diagnose and fix |
 | `docker`, `images`, `volumes`, `prune` | Docker — works outside a project |
 | `exec <container>` | Shell inside a container |
-| `servers`, `ssh prod-1` | Fleet machines |
+| `servers`, `server prod-1` | Your servers, one server's page |
+| `ssh prod-1` | Shell on an SSH server (not offered for Fleet Cloud servers) |
+| `pair prod-1` | Pair a server that runs muster (`muster fleet pair`) |
 | `fleet deploy\|status\|test\|rollback [target]` | Fleet operations |
-| `fleet add prod-1 deploy@10.0.0.5` | Add a machine |
+| `fleet add prod-1 deploy@10.0.0.5` | Add a server |
 | `cloud login\|logout\|status` | Fleet Cloud |
 | `setup` | Scan this folder and create muster.json |
 | `settings [api]` | Edit global and project settings |
@@ -102,37 +107,49 @@ Filler words are fine (`logs for api`), so are unique prefixes (`dep api`).
 
 | Key | Everywhere |
 |---|---|
-| `/` | Start a command (popup lists them) |
-| `Tab` | Complete · accept "did you mean" · move focus prompt → services → main |
-| `↑` `↓` | Prompt history (persisted in `~/.muster/tui_history`) |
-| `Ctrl+R` | Search history |
-| `Ctrl+K` | Command palette: every action with its key |
+| `ctrl+k` `/` `:` | Command palette (history in `~/.muster/tui_history`) |
 | `?` | Help for the current screen |
+| `↑` `↓` / `j` `k` | Move in lists · `Enter` opens |
 | `Esc` | Close · cancel the running task · back |
-| `Ctrl+O` | Full-screen main pane (full deploy log) |
-| `Ctrl+C` | Clear the prompt · cancel the task · twice to quit |
+| `ctrl+o` | Full-screen deploy log |
+| `ctrl+c` | Close the popup · cancel the task · twice to quit |
+| `q` | Back (quit on the home screen) |
 
 Screen keys (also in `?`):
 
 * **Deploy failure** — `r` retry · `b` rollback · `s` skip · `a` abort · `f` fix · `e` explain with AI, `←` `→` + Enter
 * **Logs** — `/` search, `n`/`N`, `e`/`E` jump to errors, `L` level filter, `w` wrap, `y` copy, `End` follow
 * **Docker** — `1`-`4` tabs, `l` logs, `r` restart, `s` stop/start, `x` shell, `d` remove, `p` pull, `P` prune
-* **Servers** — `t` test, `U` fleet health, `Enter` ssh, `d` deploy, `u` status, `b` rollback, `a` add
+* **Servers** — `Enter` open, `d` deploy (asks first), `s` status, `t` test, `b` rollback, `p` pair, `a` add, `c` Fleet Cloud, `r` check now
+* **Server** — `d` deploy, `s` status, `t` test, `b` rollback, `o` shell (SSH servers), `p` pair, `a` ask, `r` check again
 * **Explain** — `f` apply the fix (asks first), `a` explain with AI, `l` logs, `d` deploy
 * **Assistant** — `y`/`n` run or decline a proposed action, Enter sends a follow-up (empty finishes)
 * **Service** — `d` deploy, `p` dry run, `l` logs, `b` rollback, `r` restart, `e` edit hook, `s` settings
 * **Settings** — `[` `]` sections, Enter/Space edit, `←` `→` cycle, `J`/`K` reorder, `Ctrl+S` save, `e` `$EDITOR`
 * **History** — `s` service, `f` result, `a` action filters · **Doctor** — `f` fix what you can
 
-The mouse works for scrolling and for picking services in the left rail.
+**Mouse:** click a row to select it, click again (or double-click) to open
+it; the wheel scrolls lists, logs and the palette; footer hints, actions and
+palette rows are clickable; a click outside a popup closes it. Mouse reporting
+blocks the terminal's own text selection — hold Option (iTerm2, Terminal) or
+Shift to select, or turn the mouse off with `--no-mouse`,
+`MUSTER_TUI_MOUSE=off` or `"tui_mouse": "off"` in `~/.muster/settings.json`
+(Settings → Global).
 
 ### Screens
 
-* **Onboarding** — in a folder without `muster.json`: scan, review detected
+* **Servers home** — in a folder without `muster.json`: every server with a
+  live status (checked on open and every 30s), how it connects and how many
+  services are healthy. With no servers either, a welcome offers Set up this
+  folder, Add a server and Docker.
+* **Server** — one server: connection, how it runs (muster on the server, or
+  hooks sent over SSH), its services, and big actions. Logs and Restart are
+  shown disabled until muster has fleet commands for them.
+* **Onboarding** — `setup` in a folder without `muster.json`: scan, review detected
   services with health checks and deploy order, customise, create, then
   "Deploy now? (dry run first)".
-* **Dashboard** — health per service, last deploy, recent activity, things
-  that need attention (doctor, Docker, changed hooks).
+* **Dashboard** — health per service, last deploy, a short Servers section,
+  recent activity, things that need attention (doctor, Docker, changed hooks).
 * **Deploy** — step list with timings and streamed output; on failure the
   likely cause and what to try, and Retry / Rollback / Skip / Abort, plus
   Fix when muster has a safe one and Explain with AI when you're signed in

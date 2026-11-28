@@ -7,6 +7,7 @@ import (
 	"github.com/Muster-dev/muster-tui/internal/docker"
 	"github.com/Muster-dev/muster-tui/internal/prompt"
 	"github.com/Muster-dev/muster-tui/internal/theme"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type promptCtx = prompt.Context
@@ -14,25 +15,22 @@ type promptCtx = prompt.Context
 const (
 	minW = 60
 	minH = 16
+	// chrome: one header line and one footer line.
+	chromeH = 2
 )
 
 func spinnerFrame(n int) string { return theme.Spinner(n) }
 
-func (m *Model) railWidth() int {
-	if m.env.Fullscreen || m.w < 72 {
-		return 0
-	}
-	return clamp(m.w/4, 24, 32)
+func (m *Model) layout() {
+	m.env.MainW = max(m.w-2, 1)
+	m.env.MainH = max(m.h-chromeH, 1)
 }
 
-func (m *Model) layout() {
-	rw := m.railWidth()
-	if rw > 0 {
-		m.env.MainW = m.w - rw - 3
-	} else {
-		m.env.MainW = m.w - 2
-	}
-	m.env.MainH = max(m.h-5, 1)
+// rect is a screen region in cells.
+type rect struct{ x, y, w, h int }
+
+func (r rect) contains(x, y int) bool {
+	return x >= r.x && x < r.x+r.w && y >= r.y && y < r.y+r.h
 }
 
 // View implements tea.Model.
@@ -44,20 +42,15 @@ func (m Model) View() string {
 		return m.tooSmall()
 	}
 	m.layout()
-	bodyH := m.h - 5
+	m.env.Zones.begin()
+	bodyH := m.h - chromeH
 	var b strings.Builder
 	b.WriteString(m.headerView())
 	b.WriteByte('\n')
-	b.WriteString(rule(m.w))
-	b.WriteByte('\n')
 	b.WriteString(m.bodyView(bodyH))
 	b.WriteByte('\n')
-	b.WriteString(rule(m.w))
-	b.WriteByte('\n')
-	b.WriteString(fit(m.suggestionView(), m.w))
-	b.WriteByte('\n')
-	b.WriteString(fit(m.prompt.View(m.w, m.focus == focusPrompt && m.overlay == nil), m.w))
-	return b.String()
+	b.WriteString(m.footerView())
+	return m.env.Zones.scan(b.String())
 }
 
 func (m Model) tooSmall() string {
@@ -82,14 +75,15 @@ func (m Model) tooSmall() string {
 
 func (m Model) headerView() string {
 	st := m.env.State
-	left := " " + theme.Brand.Render("muster")
+	left := " " + m.env.mark("hdr:home", theme.Brand.Render("muster"))
 	if st.Project != nil {
 		left += "  " + theme.Title.Render(st.Project.Name())
-	} else {
-		left += "  " + theme.Dim.Render("no project")
 	}
 	if st.Branch != "" {
-		left += "  " + theme.Dim.Render(st.Branch)
+		left += "  " + theme.Dim.Render("⎇ "+st.Branch)
+	}
+	if t := m.activeScreen().Title(); m.active != "dashboard" && t != "" {
+		left += theme.Dim.Render("  ›  ") + theme.Base.Render(t)
 	}
 	centerTxt := m.summaryText()
 	var right []string
@@ -101,19 +95,19 @@ func (m Model) headerView() string {
 				label += fmt.Sprintf(" +%d", n-1)
 			}
 		}
-		right = append(right, theme.AccentFg.Render(m.env.Spin())+" "+theme.Dim.Render(trunc(label, 22)))
+		right = append(right, theme.AccentFg.Render(m.env.Spin())+" "+theme.Dim.Render(trunc(label, 24)))
 	}
 	if st.Cloud.LoggedIn {
-		right = append(right, theme.Dim.Render("relay ")+theme.OK.Render("●"))
+		right = append(right, theme.OK.Render("●")+theme.Dim.Render(" Fleet Cloud"))
 	}
-	r := strings.Join(right, "  ") + " "
+	r := strings.Join(right, "   ") + " "
 	lw, cw, rw := width(left), width(centerTxt), width(r)
-	if lw+cw+rw+4 > m.w {
+	if centerTxt == "" || lw+cw+rw+6 > m.w {
 		return spread(left, r, m.w)
 	}
 	gap := m.w - lw - cw - rw
 	lpad := gap / 2
-	if mid := (m.w-cw)/2 - lw; mid > 1 && mid < gap-1 {
+	if mid := (m.w-cw)/2 - lw; mid > 2 && mid < gap-2 {
 		lpad = mid
 	}
 	return left + strings.Repeat(" ", lpad) + centerTxt + strings.Repeat(" ", gap-lpad) + r
@@ -128,7 +122,7 @@ func (m Model) summaryText() string {
 		if m.env.Engine == nil {
 			return theme.Dim.Render("muster CLI not found")
 		}
-		return theme.Dim.Render("checking…")
+		return ""
 	}
 	if st.AuthErr != nil {
 		return theme.Warning.Render("not paired")
@@ -152,168 +146,137 @@ func (m Model) summaryText() string {
 
 func (m Model) bodyView(h int) string {
 	mainW := m.env.MainW
-	var mainView string
-	if m.overlay != nil {
-		mainView = m.overlay.View(mainW, h)
-	} else {
-		mainView = m.activeScreen().View(mainW, h)
-	}
-	mainLines := strings.Split(mainView, "\n")
-	rw := m.railWidth()
-	var railLines []string
-	if rw > 0 {
-		railLines = m.railLines(rw, h)
-	}
-	sep := theme.Rule.Render("│")
-	popup := m.prompt.PopupLines(m.w - 2)
-	if m.overlay != nil || m.focus != focusPrompt {
-		popup = nil
-	}
+	mainLines := strings.Split(m.activeScreen().View(mainW, h), "\n")
 	out := make([]string, h)
 	for i := 0; i < h; i++ {
 		ml := ""
 		if i < len(mainLines) {
 			ml = mainLines[i]
 		}
-		if rw > 0 {
-			rl := ""
-			if i < len(railLines) {
-				rl = railLines[i]
-			}
-			out[i] = fit(rl, rw) + " " + sep + " " + fit(ml, mainW)
-		} else {
-			out[i] = " " + fit(ml, mainW) + " "
-		}
+		out[i] = " " + fit(ml, mainW) + " "
 	}
-	if len(popup) > 0 {
-		start := max(h-len(popup), 0)
-		for i, pl := range popup {
-			if start+i < h {
-				out[start+i] = " " + fit(pl, m.w-2) + " "
-			}
-		}
+	if m.overlay != nil {
+		m.drawOverlay(out)
 	}
 	return strings.Join(out, "\n")
 }
 
-// railItem is a selectable rail row.
-type railItem struct {
-	kind string // service, machine, docker, setup
-	id   string
-	row  int
+// drawOverlay dims the screen and draws the overlay in a centred box.
+func (m Model) drawOverlay(out []string) {
+	h := len(out)
+	iw, ih := m.overlay.Size(m.w, h)
+	iw = clamp(iw, 1, m.w-2)
+	ih = clamp(ih, 1, h-2)
+	bw, bh := iw+2, ih+2
+	x0 := (m.w - bw) / 2
+	y0 := max((h-bh)/3, 0)
+	if _, ok := m.overlay.(*palette); ok {
+		y0 = min(2, max(h-bh, 0))
+	}
+	*m.ovRect = rect{x: x0, y: y0 + 1, w: bw, h: bh} // +1: the header line
+	for i := range out {
+		out[i] = theme.Rule.Render(ansi.Strip(out[i]))
+	}
+	content := strings.Split(m.overlay.View(iw, ih), "\n")
+	border := theme.Rule
+	if _, ok := m.overlay.(*palette); ok {
+		border = theme.AccentFg
+	}
+	title := m.overlay.Title()
+	top := strings.Repeat("─", iw)
+	if title != "" && iw > len(title)+4 {
+		top = "─ " + theme.Title.Render(title) + border.Render(" "+strings.Repeat("─", iw-width(title)-3))
+	}
+	box := make([]string, 0, bh)
+	box = append(box, border.Render("╭")+border.Render(top)+border.Render("╮"))
+	for i := 0; i < ih; i++ {
+		l := ""
+		if i < len(content) {
+			l = content[i]
+		}
+		box = append(box, border.Render("│")+fit(l, iw)+border.Render("│"))
+	}
+	box = append(box, border.Render("╰"+strings.Repeat("─", iw)+"╯"))
+	for i, bl := range box {
+		y := y0 + i
+		if y >= h {
+			break
+		}
+		bg := ansi.Strip(out[y])
+		left := ansi.Truncate(bg, x0, "")
+		left += strings.Repeat(" ", max(x0-width(left), 0))
+		right := ansi.TruncateLeft(bg, x0+bw, "")
+		out[y] = theme.Rule.Render(left) + bl + theme.Rule.Render(right)
+	}
 }
 
-func (m Model) railItems() []railItem {
-	var items []railItem
-	row := 1
+// footerView is the bottom line: what you can do here (clickable), or a
+// passing message, with ctrl+k on the right.
+func (m Model) footerView() string {
+	right := m.env.mark("key:ctrl+k", theme.Key.Render("ctrl+k")+theme.Dim.Render(" commands")) + " "
+	if m.w >= 90 {
+		right = m.env.mark("key:?", theme.Key.Render("?")+theme.Dim.Render(" help")) + theme.Dim.Render("  ") + right
+	}
+	return spread(" "+m.footerLeft(), right, m.w)
+}
+
+func (m Model) footerLeft() string {
 	st := m.env.State
-	if st.Project == nil {
-		items = append(items, railItem{kind: "setup", row: 2})
-		row = 4
-	} else {
-		for _, k := range st.ServiceKeys() {
-			items = append(items, railItem{kind: "service", id: k, row: row})
-			row++
+	if m.quitArmed {
+		return theme.Warning.Render("Press ctrl+c again to quit")
+	}
+	if st.Toast != "" && m.env.Now().Before(st.ToastUntil) {
+		style := theme.Base
+		glyph := ""
+		switch st.ToastLevel {
+		case lvlOK:
+			style, glyph = theme.OK, theme.GlyphOK+" "
+		case lvlWarn:
+			style, glyph = theme.Warning, theme.GlyphWarn+" "
+		case lvlErr:
+			style, glyph = theme.Err, theme.GlyphFail+" "
 		}
-		if len(st.ServiceKeys()) == 0 {
-			row++
+		return style.Render(glyph) + st.Toast
+	}
+	if m.overlay != nil {
+		return m.overlay.Hint()
+	}
+	s := m.activeScreen()
+	if f, ok := s.(Footerer); ok {
+		if keys := f.Footer(); len(keys) > 0 {
+			return m.hintRow(keys)
 		}
 	}
-	row += 2 // blank + "Servers"
-	if len(st.Fleet.Machines) == 0 {
-		row++
+	if h := s.Hint(); h != "" {
+		return h
 	}
-	for _, mc := range st.Fleet.Machines {
-		items = append(items, railItem{kind: "machine", id: mc.Name, row: row})
-		row++
+	if m.active != "dashboard" {
+		// A few of the screen's own keys, and the way back.
+		var keys []KeyHelp
+		for _, k := range s.Keys() {
+			if len(keys) == 4 {
+				break
+			}
+			if replayable(k.Key) && k.Key != "?" {
+				keys = append(keys, KeyHelp{k.Key, shortDesc(k.Desc)})
+			}
+		}
+		return m.hintRow(append(keys, KeyHelp{"esc", "back"}))
 	}
-	row += 2
-	items = append(items, railItem{kind: "docker", row: row})
-	return items
+	return stateHint(m.env)
 }
 
-func (m Model) railRowToItem(row int) (int, bool) {
-	for i, it := range m.railItems() {
-		if it.row == row {
-			return i, true
-		}
+// hintRow renders "key label · key label", each one clickable.
+func (m Model) hintRow(keys []KeyHelp) string {
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, m.env.mark("key:"+k.Key, theme.Key.Render(k.Key)+" "+theme.Dim.Render(k.Desc)))
 	}
-	return 0, false
+	return strings.Join(parts, theme.Dim.Render(" · "))
 }
 
-func (m Model) railLines(w, h int) []string {
-	st := m.env.State
-	items := m.railItems()
-	selRow := -1
-	if m.focus == focusRail && m.railSel < len(items) {
-		selRow = items[m.railSel].row
-	}
-	var lines []string
-	add := func(s string) { lines = append(lines, s) }
-	add(" " + section("Services"))
-	if st.Project == nil {
-		add(theme.Dim.Render(" No project here"))
-		add(" " + code("setup") + theme.Dim.Render(" to create one"))
-		add("")
-	} else {
-		for _, k := range st.ServiceKeys() {
-			add(m.railService(k, w))
-		}
-		if len(st.ServiceKeys()) == 0 {
-			add(theme.Dim.Render(" none configured"))
-		}
-	}
-	add("")
-	add(" " + section("Servers"))
-	if len(st.Fleet.Machines) == 0 {
-		if st.FleetLoaded {
-			add(theme.Dim.Render(" none · ") + code("servers"))
-		} else {
-			add(theme.Dim.Render(" …"))
-		}
-	}
-	for _, mc := range st.Fleet.Machines {
-		glyph := theme.Dim.Render(theme.GlyphUnknown)
-		add(fit(" "+glyph+" "+fit(mc.Name, 9)+" "+theme.Dim.Render(mc.Transport+" "+mc.Mode), w))
-	}
-	add("")
-	add(" " + section("Docker"))
-	add(" " + m.dockerLine())
-	if st.Cloud.LoggedIn {
-		add("")
-		add(" " + section("Cloud"))
-		add(" " + theme.OK.Render("●") + " " + theme.Dim.Render(trunc(firstNonEmpty(st.Cloud.Name, st.Cloud.Org), w-4)))
-	}
-	for i := range lines {
-		if i == selRow {
-			lines[i] = theme.AccentFg.Render(theme.GlyphCursor) + theme.Selected.Render(fit(strings.TrimPrefix(lines[i], " "), w-1))
-		}
-	}
-	if len(lines) > h {
-		lines = lines[:h]
-	}
-	return lines
-}
-
-func (m Model) railService(key string, w int) string {
-	st := m.env.State
-	s := st.Project.Service(key)
-	ss := st.Svc(key)
-	glyph := healthGlyph(ss.Shown())
-	if ss.Deploying {
-		glyph = theme.AccentFg.Render(m.env.Spin())
-	}
-	nameW := clamp(w-14, 6, 12)
-	meta := s.HealthLabel()
-	if s.SkipDeploy {
-		meta = "skip"
-	}
-	line := " " + glyph + " " + fit(key, nameW) + " " + theme.Dim.Render(meta)
-	if ss.Deploying {
-		line = " " + glyph + " " + fit(key, nameW) + " " + theme.AccentFg.Render("deploying")
-	}
-	return fit(line, w)
-}
+// Footerer screens list their footer hints (at most ~5, most useful first).
+type Footerer interface{ Footer() []KeyHelp }
 
 func healthGlyph(h string) string {
 	switch h {
@@ -367,4 +330,16 @@ func firstNonEmpty(xs ...string) string {
 		}
 	}
 	return ""
+}
+
+// shortDesc keeps the first few words of a help line for the footer.
+func shortDesc(s string) string {
+	if i := strings.IndexAny(s, "(—·,"); i > 0 {
+		s = s[:i]
+	}
+	f := strings.Fields(s)
+	if len(f) > 3 {
+		f = f[:3]
+	}
+	return strings.Join(f, " ")
 }

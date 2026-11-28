@@ -245,6 +245,15 @@ type ServiceHealth struct {
 	Service string `json:"service"`
 	Name    string `json:"name"`
 	Status  string `json:"status"`
+	Detail  string `json:"detail"`
+	Stack   string `json:"stack"`
+	// LastDeploy is the server's own last deploy of this service, when the
+	// CLI reports it.
+	LastDeploy *struct {
+		TS     string `json:"ts"`
+		Status string `json:"status"`
+		Commit string `json:"commit"`
+	} `json:"last_deploy"`
 }
 
 // ParseStatus decodes `muster fleet status --json`: {"status":[…]} from

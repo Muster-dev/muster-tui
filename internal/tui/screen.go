@@ -58,7 +58,6 @@ type (
 		onYes tea.Cmd
 	}
 	fullscreenMsg struct{ on bool }
-	focusMsg      struct{ zone focusZone }
 )
 
 func nav(s Screen) tea.Cmd        { return func() tea.Msg { return navMsg{s} } }
@@ -73,12 +72,4 @@ const (
 	lvlOK
 	lvlWarn
 	lvlErr
-)
-
-type focusZone int
-
-const (
-	focusPrompt focusZone = iota
-	focusRail
-	focusMain
 )

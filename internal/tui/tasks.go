@@ -203,3 +203,13 @@ func (t *Tasks) finish(id int) (TaskEndedMsg, bool) {
 	}
 	return TaskEndedMsg{ID: id, Canceled: canceled}, true
 }
+
+// Busy reports whether a task with this label is running.
+func (t *Tasks) Busy(label string) bool {
+	for _, x := range t.tasks {
+		if x.Label == label {
+			return true
+		}
+	}
+	return false
+}

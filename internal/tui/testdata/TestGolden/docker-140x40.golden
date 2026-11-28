@@ -1,40 +1,40 @@
- muster  acme-store  main                                        checking…
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Services                        │ [Containers 3] Images 3  Volumes 1  Disk
- ◌ redis        tcp :6379        │
- ◌ api          http :8080       │    NAME                       STATUS             PORTS          CPU    MEM        IMAGE
- ◌ web          http :3000       │ ▸● acme-api-1                 up 5 minutes (hea… :8080→8080     3.10%  160MiB     acme/api:4f2a9c1
- ◌ worker       no check         │  ● acme-redis-1               up 2 hours         :6379→6379     0.42%  12.1MiB    redis:7
-                                 │  ○ acme-web-1                 exited (137) 2 da…                                  nginx:alpine
- Servers                         │
- …                               │
-                                 │
- Docker                          │
- 2/3 running · 927MB             │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │ ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-                                 │ l logs · r restart · s stop · x shell · d rm · P prune
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ←→ 1-4 tabs · ↑↓ select · R refresh
- › type a command — deploy, logs api, docker, help                                                                      / commands · ? help
+ muster  acme-store  ⎇ main  ›  Docker
+ [Containers 3] Images 3  Volumes 1  Disk
+
+    NAME                       STATUS             PORTS          CPU    MEM        IMAGE
+ ▸● acme-api-1                 up 5 minutes (hea… :8080→8080     3.10%  160MiB     acme/api:4f2a9c1
+  ● acme-redis-1               up 2 hours         :6379→6379     0.42%  12.1MiB    redis:7
+  ○ acme-web-1                 exited (137) 2 da…                                  nginx:alpine
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ l logs · r restart · s stop · x shell · d rm · P prune
+ ←→ 1-4 tabs · ↑↓ select · R refresh                                                                                ? help  ctrl+k commands

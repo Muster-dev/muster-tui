@@ -40,8 +40,10 @@ func (m *Model) execute(line string, fromPrompt bool) tea.Cmd {
 		var pe *prompt.Error
 		if errors.As(err, &pe) {
 			if fromPrompt {
-				m.prompt.errInput, m.prompt.errMsg, m.prompt.suggestion = line, pe.Msg, pe.Suggestion
-				m.prompt.popup = false
+				// Show the problem (and the fix) in the palette.
+				pal := newPalette(m.env, m.activeScreen(), m.hist, line)
+				pal.errMsg, pal.suggestion = pe.Msg, pe.Suggestion
+				m.overlay = pal
 				return nil
 			}
 			return m.setToast(lvlErr, pe.Error())
@@ -49,8 +51,7 @@ func (m *Model) execute(line string, fromPrompt bool) tea.Cmd {
 		return m.setToast(lvlErr, err.Error())
 	}
 	if fromPrompt {
-		m.prompt.hist.Add(line)
-		m.prompt.Clear()
+		m.hist.Add(line)
 	}
 	return m.run(p)
 }
@@ -99,10 +100,8 @@ func (m *Model) pickService(p prompt.Parsed) (string, tea.Cmd) {
 	if s, ok := m.activeScreen().(*serviceScreen); ok {
 		return s.svc, nil
 	}
-	m.prompt.SetValue(p.Cmd.Name + " ")
-	m.prompt.refresh(m.env.State.PromptContext())
-	m.focus = focusPrompt
-	return "", m.setToast(lvlInfo, "Which service? "+strings.Join(keys, ", "))
+	// Ask in the palette, which lists the services.
+	return "", m.openPalette(p.Cmd.Name + " ")
 }
 
 func (m *Model) run(p prompt.Parsed) tea.Cmd {
@@ -110,7 +109,7 @@ func (m *Model) run(p prompt.Parsed) tea.Cmd {
 	switch p.Cmd.Name {
 	case "quit":
 		if t := e.Tasks.Foreground(); t != nil {
-			m.overlay = newConfirm(confirmMsg{title: "Quit while “" + t.Label + "” is running?", body: []string{"It will be cancelled."}, yes: "Quit", onYes: func() tea.Msg { e.Tasks.CancelAll(); return tea.QuitMsg{} }})
+			m.overlay = newConfirm(e, confirmMsg{title: "Quit while “" + t.Label + "” is running?", body: []string{"It will be cancelled."}, yes: "Quit", onYes: func() tea.Msg { e.Tasks.CancelAll(); return tea.QuitMsg{} }})
 			return nil
 		}
 		e.Tasks.CancelAll()
@@ -119,8 +118,7 @@ func (m *Model) run(p prompt.Parsed) tea.Cmd {
 		m.overlay = newHelp(e, m.activeScreen())
 		return nil
 	case "palette":
-		m.overlay = newPalette(e, m.activeScreen())
-		return nil
+		return m.openPalette("")
 	case "back":
 		return m.back()
 	case "dashboard":
@@ -169,7 +167,7 @@ func (m *Model) run(p prompt.Parsed) tea.Cmd {
 			m.screens["deploy"] = ns
 			return cmd
 		}
-		m.overlay = newConfirm(confirmMsg{
+		m.overlay = newConfirm(e, confirmMsg{
 			title: "Roll back " + svc + "?",
 			body:  []string{"Runs .muster/hooks/" + svc + "/rollback.sh to restore the previous version."},
 			yes:   "Roll back",
@@ -185,7 +183,7 @@ func (m *Model) run(p prompt.Parsed) tea.Cmd {
 			return c
 		}
 		if e.V07() && e.Engine != nil {
-			m.overlay = newConfirm(confirmMsg{
+			m.overlay = newConfirm(e, confirmMsg{
 				title: "Restart " + svc + "?",
 				body: []string{"Runs muster restart " + svc + ": its restart hook, or kubectl rollout restart / docker compose restart / docker restart for its stack.",
 					"Stacks without a restart are redeployed instead (no rollback)."},
@@ -280,10 +278,26 @@ func (m *Model) run(p prompt.Parsed) tea.Cmd {
 		})
 	case "servers":
 		return m.open(newServers(e))
+	case "server":
+		if _, ok := e.State.Fleet.Find(p.Args[0]); !ok {
+			return m.setToast(lvlErr, "No server called "+p.Args[0])
+		}
+		return m.open(newServerScreen(e, p.Args[0]))
+	case "pair", "fleet pair":
+		if c := m.needEngine(); c != nil {
+			return c
+		}
+		if _, ok := e.State.Fleet.Find(p.Args[0]); !ok {
+			return m.setToast(lvlErr, "No server called "+p.Args[0])
+		}
+		return m.open(newPairScreen(e, p.Args[0]))
 	case "ssh":
 		mc, ok := e.State.Fleet.Find(p.Args[0])
 		if !ok {
-			return m.setToast(lvlErr, "No machine called "+p.Args[0])
+			return m.setToast(lvlErr, "No server called "+p.Args[0])
+		}
+		if !canShell(mc) {
+			return m.setToast(lvlWarn, mc.Name+" connects through Fleet Cloud, so there's no SSH shell — try fleet status "+mc.Name)
 		}
 		return m.execProcess(fleet.SSHCmd(mc), func(err error) tea.Msg { return execDone("SSH to "+mc.Name, err) })
 	case "fleet deploy", "fleet status", "fleet test", "fleet rollback":

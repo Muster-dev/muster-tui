@@ -1,40 +1,40 @@
- muster  acme-store  main                                 2 healthy · 1 unhealthy
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Services                        │ acme-store                                                                               checked just now
- ● redis        tcp :6379        │
- ● api          http :8080       │   SERVICE  HEALTH        LAST DEPLOY           VERSION
- ✕ web          http :3000       │ ● redis    healthy       deployed 21h ago      —
- ○ worker       no check         │ ● api      healthy       deployed 20m ago      4f2a9c1
-                                 │ ✕ web      unhealthy     failed 47m ago        4f2a9c1
- Servers                         │ ○ worker   check off     never deployed        —
- none · servers                  │
-                                 │ Recent activity
- Docker                          │ 13:40   api        deploy    ✓ ok        4f2a9c1
- 5/7 running · 2.1GB             │ 13:12   web        deploy    ✕ failed    4f2a9c1
-                                 │ 11:02   web        deploy    ✓ ok        9d1c2aa
-                                 │ Nov 25  redis      deploy    ✓ ok
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ muster  acme-store  ⎇ main                               2 healthy · 1 unhealthy
+ Services                                                                                                                  checked just now
+
+     Service  Health        Last deploy           Version
+ ▸ ● redis    healthy       deployed 21h ago      —
+   ● api      healthy       deployed 20m ago      4f2a9c1
+   ✕ web      unhealthy     failed 47m ago        4f2a9c1
+   ○ worker   check off     never deployed        —
+
+ Recent activity
+  13:40   api        deploy    ✓ ok        4f2a9c1
+  13:12   web        deploy    ✕ failed    4f2a9c1
+  11:02   web        deploy    ✓ ok        9d1c2aa
+  Nov 25  redis      deploy    ✓ ok
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
  ✕ web is unhealthy · logs web · rollback web
- › ▏type a command — deploy, logs api, docker, help                                                                     / commands · ? help
+ enter open · d deploy · L logs · r refresh                                                                         ? help  ctrl+k commands

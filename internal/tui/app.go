@@ -1,11 +1,12 @@
-// Package tui is muster-tui's Bubble Tea application: a header, a left rail
-// (services, servers, docker), a main pane showing the active screen, a
-// suggestion bar and a prompt that understands commands.
+// Package tui is muster-tui's Bubble Tea application: a header line, the
+// active screen, a footer of clickable hints, and a command palette
+// (ctrl+k) that runs every action and understands typed commands.
 package tui
 
 import (
 	"context"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/Muster-dev/muster-tui/internal/auth"
@@ -22,10 +23,10 @@ type Model struct {
 	screens map[string]Screen
 	active  string
 	stack   []string
-	focus   focusZone
-	railSel int
-	prompt  promptBox
+	hist    *prompt.History
 	overlay overlay
+	ovRect  *rect // where the overlay box was drawn (for clicks outside it)
+	click   *lastClick
 	w, h    int
 
 	quitArmed   bool
@@ -34,21 +35,31 @@ type Model struct {
 	doctorAsked *bool // background doctor run started
 }
 
+// lastClick remembers the previous click, to spot double clicks.
+type lastClick struct {
+	id string
+	at time.Time
+}
+
 type (
 	spinTickMsg    struct{}
+	fleetTickMsg   struct{}
 	refreshTickMsg struct{}
 	quitResetMsg   struct{}
 	toastClearMsg  struct{ until time.Time }
 )
 
-const refreshEvery = 20 * time.Second
+const (
+	refreshEvery      = 20 * time.Second
+	fleetRefreshEvery = 30 * time.Second
+)
 
 // New builds the app.
 func New(d Deps) Model {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	env := &Env{Deps: d, Tasks: newTasks(d.Now), State: newState(d.Project, d.Cwd)}
+	env := &Env{Deps: d, Tasks: newTasks(d.Now), State: newState(d.Project, d.Cwd), Zones: newClickZones()}
 	if d.CLIVersion != "" {
 		env.State.Caps = engine.CapsFor(d.CLIVersion)
 	}
@@ -60,18 +71,13 @@ func New(d Deps) Model {
 		doctorAsked: new(bool),
 		env:         env,
 		screens:     map[string]Screen{},
-		prompt:      newPromptBox(prompt.LoadHistory(d.HistoryPath)),
+		hist:        prompt.LoadHistory(d.HistoryPath),
+		ovRect:      &rect{},
+		click:       &lastClick{},
 	}
 	var first Screen = newDashboard(env)
 	m.screens[first.Key()] = first
 	m.active = first.Key()
-	if d.Project == nil {
-		ob := newOnboarding(env, d.Cwd)
-		m.screens[ob.Key()] = ob
-		m.active = ob.Key()
-		m.stack = []string{"dashboard"}
-		m.focus = focusMain
-	}
 	return m
 }
 
@@ -88,7 +94,7 @@ func (m Model) Init() tea.Cmd {
 		// the dashboard fills in first.
 		cmds = append(cmds, m.env.loadStatus(), m.env.loadHistory())
 	}
-	cmds = append(cmds, m.env.loadDocker(), m.env.loadFleet(), tickRefresh())
+	cmds = append(cmds, m.env.loadDocker(), m.env.loadFleet(), tickRefresh(), tickFleet())
 	if !m.env.State.Caps.Known {
 		cmds = append(cmds, m.env.loadVersion())
 	}
@@ -112,6 +118,10 @@ func (e *Env) pair() tea.Cmd {
 
 func tickRefresh() tea.Cmd {
 	return tea.Tick(refreshEvery, func(time.Time) tea.Msg { return refreshTickMsg{} })
+}
+
+func tickFleet() tea.Cmd {
+	return tea.Tick(fleetRefreshEvery, func(time.Time) tea.Msg { return fleetTickMsg{} })
 }
 
 func tickSpin() tea.Cmd {
@@ -160,6 +170,13 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 			cmds = append(cmds, m.env.loadDocker())
 		}
 		return tea.Batch(append(cmds, tickRefresh())...)
+	case fleetTickMsg:
+		// Servers refresh on their own while they're on screen.
+		var cmd tea.Cmd
+		if m.showsServers() {
+			cmd = m.env.loadFleetHealth()
+		}
+		return tea.Batch(cmd, tickFleet())
 	case quitResetMsg:
 		m.quitArmed = false
 		return nil
@@ -210,10 +227,7 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 	case runLineMsg:
 		return m.execute(msg.line, false)
 	case prefillMsg:
-		m.prompt.SetValue(msg.text)
-		m.prompt.refresh(m.env.State.PromptContext())
-		m.focus = focusPrompt
-		return nil
+		return m.openPalette(msg.text)
 	case toastMsg:
 		return m.setToast(msg.level, msg.text)
 	case refreshMsg:
@@ -229,14 +243,10 @@ func (m *Model) update(msg tea.Msg) tea.Cmd {
 			return nil
 		})
 	case confirmMsg:
-		m.overlay = newConfirm(msg)
+		m.overlay = newConfirm(m.env, msg)
 		return nil
 	case fullscreenMsg:
 		m.env.Fullscreen = msg.on
-		m.layout()
-		return nil
-	case focusMsg:
-		m.focus = msg.zone
 		return nil
 	case replayKeyMsg:
 		return m.toScreen(keyFromString(msg.key))
@@ -284,6 +294,10 @@ func (m *Model) dispatch(tm TaskMsg, now time.Time) tea.Cmd {
 				cmds = append(cmds, m.env.loadHooks())
 			}
 		}
+		// Servers get checked as soon as we know there are some.
+		if fm, ok := tm.Msg.(fleetMsg); ok && fm.err == nil && len(m.env.State.Fleet.Machines) > 0 && m.env.State.FleetHealthAt.IsZero() && !m.env.NoAutoLoad {
+			cmds = append(cmds, m.env.loadFleetHealth())
+		}
 		if _, ok := tm.Msg.(historyMsg); ok && m.env.State.Doctor == nil && !*m.doctorAsked && !m.env.NoAutoLoad {
 			*m.doctorAsked = true
 			cmds = append(cmds, m.env.loadDoctor(false))
@@ -296,7 +310,7 @@ func (m *Model) dispatch(tm TaskMsg, now time.Time) tea.Cmd {
 		}
 	}
 	switch inner := tm.Msg.(type) {
-	case navMsg, runLineMsg, toastMsg, refreshMsg, reloadConfigMsg, execMsg, confirmMsg, backMsg, focusMsg, prefillMsg:
+	case navMsg, runLineMsg, toastMsg, refreshMsg, reloadConfigMsg, execMsg, confirmMsg, backMsg, prefillMsg:
 		cmds = append(cmds, func() tea.Msg { return inner })
 	}
 	cmds = append(cmds, m.broadcast(tm))
@@ -333,15 +347,6 @@ func (m *Model) open(s Screen) tea.Cmd {
 	m.active = key
 	m.env.Active = key
 	m.overlay = nil
-	m.focus = focusMain
-	if key == "dashboard" {
-		m.focus = focusPrompt
-	}
-	// A running deploy leaves the prompt free; its confirm step and
-	// recovery menu take keys directly.
-	if d, ok := s.(*deployScreen); ok && d.phase != phConfirm {
-		m.focus = focusPrompt
-	}
 	return s.Init()
 }
 
@@ -365,20 +370,15 @@ func (m *Model) back() tea.Cmd {
 	for len(m.stack) > 0 {
 		key := m.stack[len(m.stack)-1]
 		m.stack = m.stack[:len(m.stack)-1]
-		if s, ok := m.screens[key]; ok && key != m.active {
+		if _, ok := m.screens[key]; ok && key != m.active {
 			m.leave(m.active)
 			m.active = key
-			if key == "dashboard" || key == "deploy" {
-				m.focus = focusPrompt
-			}
-			_ = s
 			return nil
 		}
 	}
 	if m.active != "dashboard" {
 		m.leave(m.active)
 		m.active = "dashboard"
-		m.focus = focusPrompt
 	}
 	return nil
 }
@@ -402,6 +402,8 @@ func (m *Model) refresh(what string) tea.Cmd {
 		return e.loadDocker()
 	case "fleet":
 		return e.loadFleet()
+	case "fleet-health":
+		return e.loadFleetHealth()
 	case "doctor":
 		return e.loadDoctor(false)
 	case "hooks":
@@ -438,7 +440,17 @@ func (m *Model) execProcess(cmd *exec.Cmd, after func(error) tea.Msg) tea.Cmd {
 	return func() tea.Msg { return execMsg{cmd: cmd, after: after} }
 }
 
-// keyFromString turns a help label like "r" or "enter" into a key message.
+// showsServers reports whether server status is on screen.
+func (m *Model) showsServers() bool {
+	if len(m.env.State.Fleet.Machines) == 0 {
+		return false
+	}
+	a := m.active
+	return a == "dashboard" || a == "servers" || strings.HasPrefix(a, "server:")
+}
+
+// keyFromString turns a help label like "r", "enter" or "ctrl+s" into a key
+// message.
 func keyFromString(s string) tea.KeyMsg {
 	switch s {
 	case "enter":
@@ -447,6 +459,25 @@ func keyFromString(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEsc}
 	case "space", " ":
 		return tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyMsg{Type: tea.KeyShiftTab}
+	case "up", "↑":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down", "↓":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "left", "←":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case "right", "→":
+		return tea.KeyMsg{Type: tea.KeyRight}
+	case "pgup":
+		return tea.KeyMsg{Type: tea.KeyPgUp}
+	case "pgdown":
+		return tea.KeyMsg{Type: tea.KeyPgDown}
+	}
+	if c, ok := strings.CutPrefix(strings.ToLower(s), "ctrl+"); ok && len(c) == 1 && c[0] >= 'a' && c[0] <= 'z' {
+		return tea.KeyMsg{Type: tea.KeyCtrlA + tea.KeyType(c[0]-'a')}
 	}
 	r := []rune(s)
 	if len(r) > 0 {

@@ -198,10 +198,10 @@ func TestRestartRollbackAndLogsUseJSON(t *testing.T) {
 func TestServersShowNewFleetShape(t *testing.T) {
 	d := deps07(t, "approved")
 	f := startFlow(t, d, 120, 30)
-	f.send(refreshMsg{"fleet"}, runLineMsg{"servers"}).wait("edge-1", "prod-1", "deploy@10.0.0.5:2222", "not paired")
-	f.key("U").wait("2/3 healthy", "unreachable")
+	f.send(refreshMsg{"fleet"}, runLineMsg{"servers"}).wait("edge-1", "prod-1", "SSH · deploy@10.0.0.5:2222", "Fleet Cloud", "Needs pairing")
+	f.key("r").wait("2/3 healthy", "Offline")
 	_, view := f.end()
-	if !strings.Contains(view, "Groups") || !strings.Contains(view, "edge-1, prod-1") {
+	if !strings.Contains(view, "Groups") || !strings.Contains(view, "edge-1, prod-1") || strings.Contains(view, "MACHINE") {
 		t.Fatalf("\n%s", view)
 	}
 }
@@ -445,8 +445,8 @@ func TestRecoveryTakesKeysAfterApprovalThenDeploy(t *testing.T) {
 	f.key("a").wait("on this machine?")
 	f.key("enter").wait("Likely cause")
 	fm, _ := f.end()
-	if fm.focus != focusMain {
-		t.Fatal("focus should be on the recovery menu")
+	if d, ok := fm.screens["deploy"].(*deployScreen); !ok || d.phase != phFailed || fm.active != "deploy" {
+		t.Fatal("the recovery menu should be showing")
 	}
 }
 

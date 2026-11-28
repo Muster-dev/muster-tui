@@ -204,3 +204,6 @@ func button(label string, selected bool) string {
 	}
 	return " " + theme.Base.Render(label) + " "
 }
+
+// stripANSI removes colours and other escape sequences.
+func stripANSI(s string) string { return ansi.Strip(s) }

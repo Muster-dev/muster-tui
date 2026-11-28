@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Muster-dev/muster-tui/internal/engine"
+	"github.com/Muster-dev/muster-tui/internal/fleet"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -28,6 +29,21 @@ func keys(s string) []tea.Msg {
 	return out
 }
 
+// feedRun sends msg and then the message its command produces (one level:
+// enough for a palette pick that runs a command line).
+func feedRun(m Model, msg tea.Msg) Model {
+	nm, cmd := m.Update(msg)
+	m = nm.(Model)
+	if cmd != nil {
+		if out := cmd(); out != nil {
+			if _, ok := out.(tea.BatchMsg); !ok {
+				m = feed(m, out)
+			}
+		}
+	}
+	return m
+}
+
 func TestResizeToTinyNeverPanics(t *testing.T) {
 	d := baseDeps(t)
 	d.Docker = fakeDocker(t, "down")
@@ -37,12 +53,15 @@ func TestResizeToTinyNeverPanics(t *testing.T) {
 		msgs = append(msgs, f)
 	}
 	m = feed(m, msgs...)
+	m = feed(m, testFleet, fleetHealthMsg{st: []fleet.MachineStatus{{Machine: "prod-1", Reachable: true, Services: []fleet.ServiceHealth{{Service: "a-very-long-service-name-indeed", Status: "blocked", Detail: "health hook blocked by security check (muster hooks status --json)"}}}}})
 	screens := []func(e *Env) Screen{
 		func(e *Env) Screen { return newDashboard(e) },
 		func(e *Env) Screen { return newDeploy(e, []string{"api", "web"}, false, false, false) },
 		func(e *Env) Screen { return newDockerScreen(e, 0) },
 		func(e *Env) Screen { return newSettings(e) },
 		func(e *Env) Screen { return newServers(e) },
+		func(e *Env) Screen { return newServerScreen(e, "prod-1") },
+		func(e *Env) Screen { return newPairScreen(e, "prod-1") },
 		func(e *Env) Screen { return newHistoryScreen(e) },
 		func(e *Env) Screen { return newDoctorScreen(e, false) },
 		func(e *Env) Screen { return newServiceScreen(e, "api") },
@@ -60,7 +79,7 @@ func TestResizeToTinyNeverPanics(t *testing.T) {
 			checkFrame(t, s.Key(), m.View(), sz[0], sz[1])
 			m.overlay = newHelp(m.env, s)
 			checkFrame(t, s.Key()+"+help", m.View(), sz[0], sz[1])
-			m.overlay = newPalette(m.env, s)
+			m.overlay = newPalette(m.env, s, nil, "")
 			checkFrame(t, s.Key()+"+palette", m.View(), sz[0], sz[1])
 			m.overlay = nil
 			m.env.Fullscreen = !m.env.Fullscreen
@@ -90,53 +109,67 @@ func checkFrame(t *testing.T, name, view string, w, h int) {
 	}
 }
 
-func TestPromptCompletionAndDidYouMean(t *testing.T) {
+func TestPaletteCompletionAndDidYouMean(t *testing.T) {
 	m := New(baseDeps(t))
-	m = feed(m, tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = feed(m, keys("lo")...)
-	if !m.prompt.popup || m.prompt.comp.Items[0].Label != "logs" {
-		t.Fatalf("popup %+v", m.prompt.comp.Items)
+	m = feed(m, tea.WindowSizeMsg{Width: 100, Height: 30}, tea.KeyMsg{Type: tea.KeyCtrlK})
+	p, ok := m.overlay.(*palette)
+	if !ok {
+		t.Fatal("ctrl+k should open the palette")
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.prompt.Value() != "logs " {
-		t.Fatalf("tab completed to %q", m.prompt.Value())
+	m = feed(m, keys("lo")...)
+	if p.sel >= len(p.shown) || p.shown[p.sel].label != "Logs" {
+		t.Fatalf("first match: %+v", p.shown)
+	}
+	// Logs needs a service: Enter fills the input and lists them.
+	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if p.input.Value() != "logs " || m.overlay == nil {
+		t.Fatalf("enter should ask for the service, got %q", p.input.Value())
 	}
 	m = feed(m, keys("ap")...)
-	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.prompt.Value() != "logs api " {
-		t.Fatalf("service completion %q", m.prompt.Value())
+	if p.shown[p.sel].line != "logs api" {
+		t.Fatalf("service completion: %+v", p.shown[p.sel])
+	}
+	m = feedRun(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.overlay != nil || m.active != "logs:api" {
+		t.Fatalf("logs api should open (active %s)", m.active)
 	}
 
-	m.prompt.Clear()
+	m = feed(m, tea.KeyMsg{Type: tea.KeyCtrlK})
+	p = m.overlay.(*palette)
 	m = feed(m, keys("rollbak wbe")...)
+	p.sel = len(p.shown) // no row: run what was typed
 	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.prompt.suggestion != "rollback web" {
-		t.Fatalf("suggestion %q (%s)", m.prompt.suggestion, m.prompt.errMsg)
+	if p.suggestion != "rollback web" {
+		t.Fatalf("suggestion %q (%s)", p.suggestion, p.errMsg)
 	}
 	if !strings.Contains(m.View(), "did you mean") {
-		t.Fatal("suggestion bar should offer the fix")
+		t.Fatal("the palette should offer the fix")
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyTab})
-	if m.prompt.Value() != "rollback web" {
-		t.Fatalf("tab should apply the suggestion, got %q", m.prompt.Value())
+	if p.input.Value() != "rollback web" {
+		t.Fatalf("tab should apply the suggestion, got %q", p.input.Value())
 	}
 }
 
-func TestHistoryNavigationAndQuit(t *testing.T) {
+func TestPaletteRecentAndQuit(t *testing.T) {
 	m := New(baseDeps(t))
-	m = feed(m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = feed(m, tea.WindowSizeMsg{Width: 100, Height: 30}, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	m = feed(m, keys("status")...)
-	m = feed(m, tea.KeyMsg{Type: tea.KeyEnter})
-	m = feed(m, tea.KeyMsg{Type: tea.KeyUp})
-	if m.prompt.Value() != "status" {
-		t.Fatalf("history up: %q", m.prompt.Value())
+	m = feedRun(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.overlay != nil {
+		t.Fatal("running a command closes the palette")
 	}
-	m = feed(m, tea.KeyMsg{Type: tea.KeyCtrlC}) // clears
-	if m.prompt.Value() != "" || m.quitArmed {
-		t.Fatal("first ctrl+c should clear the prompt")
+	m = feed(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{':'}})
+	p := m.overlay.(*palette)
+	if len(p.shown) < 2 || p.shown[0].label != "Recent" || p.shown[1].line != "status" {
+		t.Fatalf("recent commands first: %+v", p.shown[:2])
+	}
+	m = feed(m, tea.KeyMsg{Type: tea.KeyCtrlC}) // closes the palette
+	if m.overlay != nil || m.quitArmed {
+		t.Fatal("first ctrl+c should close the palette")
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyCtrlC})
-	if !m.quitArmed || !strings.Contains(m.View(), "Ctrl+C again") {
+	if !m.quitArmed || !strings.Contains(m.View(), "ctrl+c again") {
 		t.Fatal("second ctrl+c should arm quit")
 	}
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -207,16 +240,13 @@ func TestDeployAllAsksFirst(t *testing.T) {
 	if !ok || d.phase != phConfirm {
 		t.Fatal("deploying everything should ask first")
 	}
-	if m.focus != focusMain {
-		t.Fatal("the confirm step should take keys directly")
-	}
 	if v := m.View(); !strings.Contains(v, "Deploy 4 services") || !strings.Contains(v, "dry run first") {
 		t.Fatalf("confirm view:\n%s", v)
 	}
 	m = feed(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	d = m.screens["deploy"].(*deployScreen)
-	if !d.dry || d.phase != phRunning || m.prompt.Value() != "" {
-		t.Fatalf("d should start a dry run (dry=%v phase=%v prompt=%q)", d.dry, d.phase, m.prompt.Value())
+	if !d.dry || d.phase != phRunning || m.overlay != nil {
+		t.Fatalf("d should start a dry run (dry=%v phase=%v)", d.dry, d.phase)
 	}
 	m.Shutdown()
 }
@@ -287,13 +317,17 @@ func TestSettingsValidationBlocksSave(t *testing.T) {
 	}
 }
 
-func TestNoProjectStartsOnboardingAndDockerWorks(t *testing.T) {
+func TestNoProjectStartsHomeAndDockerWorks(t *testing.T) {
 	d := baseDeps(t)
 	d.Project = nil
 	d.Cwd = t.TempDir()
 	m := New(d)
-	if m.active != "onboarding" {
+	if m.active != "dashboard" {
 		t.Fatalf("active = %s", m.active)
+	}
+	m = feed(m, tea.WindowSizeMsg{Width: 100, Height: 30}, fleetMsg{})
+	if v := plain(m.View()); !strings.Contains(v, "Set up this folder") || strings.Contains(v, "no project") {
+		t.Fatalf("welcome:\n%s", v)
 	}
 	m = feed(m, tea.WindowSizeMsg{Width: 100, Height: 30}, runLineMsg{"docker"})
 	if m.active != "docker" {

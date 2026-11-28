@@ -8,59 +8,22 @@ import (
 	"github.com/Muster-dev/muster-tui/internal/theme"
 )
 
-// suggestionView is the one-line bar above the prompt: what's going on and
-// the next useful thing to type.
-func (m Model) suggestionView() string {
-	st := m.env.State
-	if m.quitArmed {
-		return " " + theme.Warning.Render("Press Ctrl+C again to quit")
-	}
-	if m.prompt.errInput != "" && m.prompt.Value() == m.prompt.errInput {
-		msg := " " + theme.Err.Render(theme.GlyphFail+" ") + m.prompt.errMsg
-		if m.prompt.suggestion != "" {
-			msg += theme.Dim.Render(" — did you mean ") + code(m.prompt.suggestion) + theme.Dim.Render("? Tab to use it")
-		}
-		return msg
-	}
-	if st.Toast != "" && m.env.Now().Before(st.ToastUntil) {
-		style := theme.Base
-		glyph := ""
-		switch st.ToastLevel {
-		case lvlOK:
-			style, glyph = theme.OK, theme.GlyphOK+" "
-		case lvlWarn:
-			style, glyph = theme.Warning, theme.GlyphWarn+" "
-		case lvlErr:
-			style, glyph = theme.Err, theme.GlyphFail+" "
-		}
-		return " " + style.Render(glyph) + st.Toast
-	}
-	if m.overlay != nil {
-		return " " + m.overlay.Hint()
-	}
-	if m.focus == focusRail {
-		return " " + keyHint("↑↓", "select", "Enter", "open", "Tab", "main pane", "Esc", "prompt")
-	}
-	if h := m.activeScreen().Hint(); h != "" {
-		return " " + h
-	}
-	return " " + m.stateHint()
-}
-
-func (m Model) stateHint() string {
-	st := m.env.State
-	now := m.env.Now()
-	if m.env.Engine == nil {
+// stateHint is the footer's fallback: what's going on and the next useful
+// thing to do.
+func stateHint(e *Env) string {
+	st := e.State
+	now := e.Now()
+	if e.Engine == nil {
 		msg := "The muster CLI isn't on your PATH"
-		if m.env.EngineErr != nil {
-			msg = m.env.EngineErr.Error()
+		if e.EngineErr != nil {
+			msg = e.EngineErr.Error()
 		}
 		return theme.Warning.Render(theme.GlyphWarn+" ") + msg + theme.Dim.Render(" — Docker and settings still work")
 	}
 	if st.Project == nil {
-		return theme.Dim.Render("No muster.json here · ") + code("setup") + theme.Dim.Render(" scans this folder · ") + code("docker") + theme.Dim.Render(" works anywhere")
+		return theme.Dim.Render("No muster.json here · ") + code("setup") + theme.Dim.Render(" scans this folder")
 	}
-	if st.AuthErr != nil || m.env.TokenMissing {
+	if st.AuthErr != nil || e.TokenMissing {
 		return theme.Warning.Render(theme.GlyphWarn+" ") + "Not paired with the muster CLI" + theme.Dim.Render(" — run ") + code("muster") + theme.Dim.Render(" once, or ") + code("muster-tui --set-token <token>")
 	}
 	if n := len(st.HookChanges); n > 0 {
@@ -84,7 +47,7 @@ func (m Model) stateHint() string {
 		}
 		return theme.Err.Render(theme.GlyphUnhealthy+" ") + who + " unhealthy" + since + theme.Dim.Render(" · ") + code("logs "+k) + theme.Dim.Render(" · ") + code("rollback "+k)
 	}
-	if st.DockerErr != nil && st.DockerErr != docker.ErrNotInstalled && usesDocker(m.env) {
+	if st.DockerErr != nil && st.DockerErr != docker.ErrNotInstalled && usesDocker(e) {
 		return theme.Warning.Render(theme.GlyphWarn+" ") + "Docker isn't running" + theme.Dim.Render(" — start Docker Desktop (or ") + code("colima start") + theme.Dim.Render(")")
 	}
 	if st.HistoryLoaded && len(st.History) == 0 {
@@ -97,7 +60,7 @@ func (m Model) stateHint() string {
 	if st.StatusLoaded && h > 0 && h == len(st.ServiceKeys()) {
 		return theme.OK.Render(theme.GlyphOK+" ") + fmt.Sprintf("All %s healthy", plural(h, "service")) + theme.Dim.Render(" · ") + code("deploy") + theme.Dim.Render(" · ") + code("logs <service>")
 	}
-	return theme.Dim.Render("Try ") + code("deploy") + theme.Dim.Render(", ") + code("logs <service>") + theme.Dim.Render(", ") + code("docker") + theme.Dim.Render(" — Ctrl+K lists everything")
+	return theme.Dim.Render("Try ") + code("deploy") + theme.Dim.Render(", ") + code("logs <service>") + theme.Dim.Render(", ") + code("docker") + theme.Dim.Render(" — ctrl+k lists everything")
 }
 
 func usesDocker(e *Env) bool {

@@ -6,7 +6,7 @@ muster-tui is the interactive face of `muster`. The bash CLI stays the engine
 it runs the CLI, Docker and SSH as child processes and renders what they say.
 
 ```
-main.go ──► tui.New(Deps) ──► tea.Program (alt screen, mouse)
+main.go ──► tui.New(Deps) ──► tea.Program (alt screen, mouse unless --no-mouse)
                │
                ├── engine   muster CLI wrapper (JSON + NDJSON streams, raw streams)
                ├── docker   docker CLI wrapper (--format '{{json .}}')
@@ -33,19 +33,51 @@ main.go ──► tui.New(Deps) ──► tea.Program (alt screen, mouse)
 ## The root model (`internal/tui/app.go`)
 
 ```
- header      muster · project · branch · summary · background spinner · relay
- ─────────
- rail │ main pane (active Screen)                 ← body
- ─────────
- suggestion bar (state + next useful action)
- › prompt                                         / commands · ? help
+ header      muster · project · ⎇ branch · › screen · summary · task spinner · Fleet Cloud
+ body        the active Screen (overlays draw in a centred box over it, dimmed)
+ footer      clickable hints for this screen (≤ 5)                ? help  ctrl+k commands
 ```
 
-* **Layout** (`layout.go`): chrome is 5 rows. Rail width is `clamp(w/4, 22, 32)`; it is hidden in full-screen mode (Ctrl+O) and below 72 columns. Below 60×16 a "terminal too small" view is shown instead. Overlays (palette, help, confirm) render inside the main pane region; the completion popup replaces the bottom rows of the body. All width math uses ANSI-aware `lipgloss.Width` / `ansi.Truncate` helpers in `textutil.go`.
-* **Focus**: `prompt` (default), `rail`, `main`. Tab with an empty prompt moves focus to the rail, Tab again to main. Commands that open an interactive screen move focus to main. In main/rail focus, keys the screen does not handle and that are printable fall through to the prompt (so you can always just start typing). Esc priority: overlay → screen (search box, form) → cancel the foreground task → focus back to prompt → clear the prompt → previous screen.
-* **Ctrl+C**: clears the prompt if it has text; otherwise cancels the foreground task; otherwise arms quit ("Press Ctrl+C again to quit", 2 s window).
-* **Shared state** (`state.go`): project config, per-service health (with "unhealthy since"), last deploy per service (from history), docker summary, fleet machines, cloud login, doctor warnings, hook changes. Only the root `Update` mutates it; screens get a read-only pointer for rendering.
-* **Suggestion bar** (`suggest.go`): the active screen's hint wins when it has one (e.g. "api is building — Ctrl+O full log · Esc cancel"); otherwise a priority list derived from state (no token → how to pair; hooks changed → `approve`; unhealthy service → `logs api` · `rollback api`; Docker down; nothing deployed yet → `deploy --dry-run`; all good → `deploy`).
+* **Layout** (`layout.go`): chrome is 2 rows; the screen gets `w-2 × h-2`.
+  Below 60×16 a "terminal too small" view is shown instead. Overlays
+  (palette, help, confirm) implement `Size(bw, bh)` and are drawn in a
+  bordered box over the dimmed screen; the root remembers the box (`ovRect`)
+  so a click outside closes it. All width math uses ANSI-aware
+  `lipgloss.Width` / `ansi.Truncate` helpers in `textutil.go`.
+* **Keys** (`keys.go`): ctrl+c closes a popup, then cancels the foreground
+  task, then arms quit (2 s window). An open overlay gets every key.
+  `ctrl+k` always opens the palette; otherwise `Capturer` screens (forms,
+  search boxes) get every key, then the active screen; keys it doesn't handle
+  fall back to `/` `:` (palette), `?` (help), `esc` (cancel foreground task →
+  leave full screen → back) and `q` (back, or quit on home).
+* **Palette** (`overlay.go`): the one place to type. Items are built from
+  state: recent commands, actions (project ones only in a project), servers
+  ("Go to byricky"), services, this screen's keys, and — once you type —
+  server × action and service × action combos and every registry command.
+  Fuzzy-ranked with `prompt.FuzzyScore`. Typed text that parses becomes a
+  "Run" row and its last word is completed with `prompt.Complete`; Enter on
+  something that doesn't parse shows the parser's "did you mean" (Tab
+  applies it). Rows run a command line through `runLineMsg` (so routing stays
+  in `commands.go`), a `tea.Cmd` (confirmed server actions) or replay a
+  screen key.
+* **Mouse** (`zones.go`, `keys.go`): screens wrap clickable text with
+  `env.mark(id, text)` (bubblezone markers, zero-width to lipgloss); the root
+  `View` scans the frame and the mouse handler hit-tests the smallest region.
+  `key:<k>` regions (footer hints) replay the key; `hdr:home` goes home;
+  `ov:*` regions go to the overlay (`overlayClicker`); anything else goes to
+  the active screen's `Click(id, double)` (`Clicker`). A second click on the
+  same region within 400 ms is a double click. The wheel moves the overlay
+  selection (`overlayWheel`) or is sent to the screen as ↑/↓.
+* **Shared state** (`state.go`): project config, per-service health (with
+  "unhealthy since"), last deploy per service (from history), docker summary,
+  fleet servers and their last `fleet status --json` (`FleetHealth`), cloud
+  login, doctor warnings, hook changes. Only the root `Update` mutates it;
+  screens get a read-only pointer for rendering.
+* **Server health**: `loadFleetHealth` runs `muster fleet status --json`
+  (cloud servers through the relay, SSH servers over SSH) as the background
+  task "checking servers": once when the fleet list first loads, every 30 s
+  while a servers view is on screen, and on `r`. `Env.serverStatus` turns it
+  into Online / Offline / Checking… / Needs pairing.
 
 ## Screens (`internal/tui/screen_*.go`)
 
@@ -66,8 +98,10 @@ Live screens are cached by key, so a deploy keeps running and updating while you
 
 | Screen | File | Data source |
 |---|---|---|
+| Servers home / Servers | `screen_servers.go` | fleet list + `FleetHealth`; actions route to `fleet deploy/status/test/rollback` (deploy and rollback confirm first), add-server form → `muster fleet add` |
+| Server | `screen_server.go` | one server: connection, mode, services from `fleet status --json`, actions; Logs/Restart disabled (no fleet command), no shell for cloud servers; pair screen → `muster fleet pair <name> --token` |
 | Onboarding | `screen_onboarding.go` | `config.Scan` preview → `muster setup --stack … --services … --order … --health …` (raw stream) |
-| Dashboard | `screen_dashboard.go` | shared state (`status --json`, `history --json`, `doctor --json`, docker summary) |
+| Dashboard | `screen_dashboard.go` | shared state (`status --json`, `history --json`, `doctor --json`, docker summary, fleet health); with no project it is the servers home (or a welcome) |
 | Deploy | `screen_deploy.go` | muster ≥ 0.7: one `deploy --json --stop-on-failure [--from svc]` stream, events routed by service; older: `deploy --json <svc>` per service. Stops on failure with Retry / Rollback / Skip / Abort, Likely cause / Try (`hint` event or `explain --json`), Fix (`explain --fix --yes` after a confirm), Explain with AI; dry run uses one `deploy --json --dry-run` call |
 | Hook approval | `screen_approval.go` | muster ≥ 0.7: `hooks status --json`, Approve (after a confirm) runs `hooks approve --yes --json`; older: `config.HookChanges` + interactive `muster hooks approve` |
 | Explain | `screen_explain.go` | `explain [svc] --json`; Fix runs `explain --fix --yes` after a confirm |
@@ -75,11 +109,10 @@ Live screens are cached by key, so a deploy keeps running and updating while you
 | Service detail | `screen_service.go` | config + state + `history --json <svc>` |
 | Logs | `screen_logs.go` | `muster logs <svc> --json --tail 200 --follow` (≥ 0.7), `muster logs <svc>` or `docker logs -f` raw stream; ring buffer, follow, search, level filter, wrap, jump to error, copy |
 | Docker | `screen_docker.go` | `docker ps/stats/images/volume ls/system df`; actions; exec shell via `tea.ExecProcess` |
-| Servers | `screen_servers.go` | `fleet list --json` (0.7 array shape or the older keyed shape), `fleet status --json` (U), ssh test, `fleet deploy/status/rollback` raw streams, ssh via `tea.ExecProcess`, add-machine form → `muster fleet add` |
 | History | `screen_history.go` | `history --json --all` with service/action/status filters |
 | Doctor | `screen_doctor.go` | `doctor --json` / `doctor --fix --json` |
 | Settings | `screen_settings.go` | `~/.muster/settings.json` + `muster.json` via `config.Project`, validation, reorder, `$EDITOR` escape hatch |
-| Help / palette | `overlay.go` | registry + active screen keys |
+| Help / palette / confirm | `overlay.go` | registry, state, active screen keys |
 
 ## Async task runner (`internal/tui/tasks.go`)
 
