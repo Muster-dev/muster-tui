@@ -246,7 +246,7 @@ func paletteItems(env *Env, active Screen, hist *prompt.History) []paletteItem {
 
 	// Every other command, as typed.
 	for _, c := range prompt.Commands {
-		if c.Hidden || seen[c.Name] {
+		if c.Hidden || seen[c.Name] || (!proj && projectOnly[c.Name]) {
 			continue
 		}
 		it := paletteItem{group: "Commands", label: c.Name, desc: c.Summary, line: c.Name}
@@ -259,6 +259,13 @@ func paletteItems(env *Env, active Screen, hist *prompt.History) []paletteItem {
 		add(it)
 	}
 	return items
+}
+
+// projectOnly commands need a muster.json; the palette hides them elsewhere.
+var projectOnly = map[string]bool{
+	"deploy": true, "dry-run": true, "rollback": true, "restart": true, "logs": true,
+	"status": true, "open": true, "history": true, "explain": true, "ask": true,
+	"doctor": true, "approve": true, "edit": true, "cleanup": true,
 }
 
 // searchOnly groups appear only once you type.
@@ -314,11 +321,11 @@ func (p *palette) filter() {
 			}
 			sc, ok := prompt.FuzzyScore(nq, strings.ReplaceAll(it.label, " ", ""))
 			if !ok {
-				sc2, ok2 := prompt.FuzzyScore(nq, strings.ReplaceAll(it.desc, " ", ""))
-				if !ok2 {
+				// Descriptions only match as plain text ("browser" → cloud login).
+				if len(q) < 3 || !strings.Contains(strings.ToLower(it.desc), strings.ToLower(q)) {
 					continue
 				}
-				sc = sc2 / 3
+				sc = 1
 			}
 			if !searchOnly(it.group) {
 				sc += 2
