@@ -525,7 +525,7 @@ func newPairScreen(env *Env, name string) *pairScreen {
 }
 
 func (p *pairScreen) Key() string     { return "pair:" + p.name }
-func (p *pairScreen) Title() string   { return "Pair " + p.name }
+func (p *pairScreen) Title() string   { return "Servers › " + p.name + " › Pair" }
 func (p *pairScreen) Init() tea.Cmd   { return nil }
 func (p *pairScreen) Hint() string    { return "" }
 func (p *pairScreen) Capturing() bool { return true }
@@ -586,7 +586,7 @@ func (p *pairScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 }
 
 func (p *pairScreen) View(w, h int) string {
-	lines := []string{section("Pair " + p.name), ""}
+	lines := []string{""}
 	lines = append(lines, wrap(p.name+" runs muster itself, so it needs to know this computer is allowed to deploy. On the server, run:", w)...)
 	lines = append(lines, "", "  "+code("muster auth create fleet-$(hostname) --scope deploy"), "")
 	lines = append(lines, wrap("Then paste the token it prints below and press Enter.", w)...)
