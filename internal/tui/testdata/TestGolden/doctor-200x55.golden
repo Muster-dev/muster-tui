@@ -1,0 +1,55 @@
+ muster  ›  Doctor                                                                                                                                                               1 failing · 1 to check
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                     ✕  2 checks need attention
+                                                                     4 checks
+
+                                                                     Needs attention
+                                                                     ! Docker installed but daemon not running  Platform & Tools
+                                                                     ✕ Hook api/deploy.sh not executable  Configuration
+
+                                                                     Fine  2 checks
+                                                                     ✓ jq available
+                                                                     ✓ muster.json valid JSON
+
+                                                                     f fix what you can  ·  r run again  ·  esc back
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ acme-store  ⎇ main                                                                                                  f fix what you can · r run again · ↑↓ scroll · esc back    ? help  ctrl+k commands

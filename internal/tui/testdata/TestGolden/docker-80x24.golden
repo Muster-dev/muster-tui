@@ -1,4 +1,4 @@
- muster  acme-store  ⎇ main  ›  Docker
+ muster  ›  Docker                                           acme-store  ⎇ main
  [Containers 3]  Images 3   Volumes 1   Disk
 
     Name                Status              Ports          CPU    Memory
@@ -21,4 +21,4 @@
 
 
 
- l logs · r restart · s stop/start · x shell · ←→ tabs          ctrl+k commands
+       l logs · r restart · s stop/start · x shell · ←→ tabs    ctrl+k commands

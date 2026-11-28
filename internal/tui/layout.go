@@ -73,25 +73,31 @@ func (m Model) tooSmall() string {
 	return strings.Join(out, "\n")
 }
 
+// headerView is the top line: where you are (muster › Servers › byricky) on
+// the left, the screen's status and background work on the right.
 func (m Model) headerView() string {
-	st := m.env.State
 	left := " " + m.env.mark("hdr:home", theme.Brand.Render("muster"))
-	if st.Project != nil {
-		left += "  " + theme.Title.Render(st.Project.Name())
-	}
-	if st.Branch != "" {
-		left += "  " + theme.Dim.Render("⎇ "+st.Branch)
-	}
 	if t := m.activeScreen().Title(); m.active != "dashboard" && t != "" {
-		left += theme.Dim.Render("  ›  ") + theme.Base.Render(t)
-	}
-	centerTxt := m.summaryText()
-	var right []string
-	if sr, ok := m.activeScreen().(Statuser); ok && m.overlay == nil {
-		if st := sr.Status(); st != "" {
-			right = append(right, st)
-			centerTxt = ""
+		parts := strings.Split(t, " › ")
+		left += theme.Rule.Render("  ›  ")
+		for i, p := range parts {
+			if i == len(parts)-1 {
+				left += theme.Base.Render(p)
+			} else {
+				left += theme.Dim.Render(p + " › ")
+			}
 		}
+	}
+	var right []string
+	status := ""
+	if sr, ok := m.activeScreen().(Statuser); ok && m.overlay == nil {
+		status = sr.Status()
+	}
+	if status == "" {
+		status = m.summaryText()
+	}
+	if status != "" {
+		right = append(right, status)
 	}
 	// Background work; the active screen shows its own tasks in its body.
 	var others []*Task
@@ -109,8 +115,8 @@ func (m Model) headerView() string {
 		taskAt = len(right)
 		right = append(right, theme.AccentFg.Render(m.env.Spin())+" "+theme.Dim.Render(trunc(label, 24)))
 	}
-	if st.Cloud.LoggedIn {
-		right = append(right, theme.OK.Render("●")+theme.Dim.Render(" Fleet Cloud"))
+	if ctx := m.contextText(); ctx != "" && !m.contextInFooter() {
+		right = append(right, ctx)
 	}
 	r := strings.Join(right, "   ") + " "
 	if taskAt >= 0 && width(left)+width(r)+1 > m.w {
@@ -118,16 +124,33 @@ func (m Model) headerView() string {
 		right[taskAt] = theme.AccentFg.Render(m.env.Spin())
 		r = strings.Join(right, "   ") + " "
 	}
-	lw, cw, rw := width(left), width(centerTxt), width(r)
-	if centerTxt == "" || lw+cw+rw+6 > m.w {
-		return spread(left, r, m.w)
+	return spread(left, r, m.w)
+}
+
+// contextText is where muster is pointed: project, branch, Fleet Cloud.
+func (m Model) contextText() string {
+	st := m.env.State
+	var parts []string
+	if st.Project != nil {
+		parts = append(parts, theme.Title.Render(st.Project.Name()))
 	}
-	gap := m.w - lw - cw - rw
-	lpad := gap / 2
-	if mid := (m.w-cw)/2 - lw; mid > 2 && mid < gap-2 {
-		lpad = mid
+	if st.Branch != "" {
+		parts = append(parts, theme.Dim.Render("⎇ "+st.Branch))
 	}
-	return left + strings.Repeat(" ", lpad) + centerTxt + strings.Repeat(" ", gap-lpad) + r
+	if st.Cloud.LoggedIn {
+		parts = append(parts, theme.OK.Render("●")+theme.Dim.Render(" Fleet Cloud"))
+	}
+	return strings.Join(parts, "  ")
+}
+
+// contextInFooter: the context sits on the left of the status bar when it
+// fits beside the hints; otherwise it moves up to the header.
+func (m Model) contextInFooter() bool {
+	ctx := m.contextText()
+	if ctx == "" {
+		return false
+	}
+	return width(ctx)+width(m.footerRight())+6 <= m.w
 }
 
 func (m Model) summaryText() string {
@@ -163,98 +186,139 @@ func (m Model) summaryText() string {
 
 func (m Model) bodyView(h int) string {
 	mainW := m.env.MainW
-	mainLines := strings.Split(m.activeScreen().View(mainW, h), "\n")
+	s := m.activeScreen()
+	cw, lp := mainW, 0
+	if wd, ok := s.(Wide); (!ok || !wd.Wide()) && mainW > contentMax {
+		cw = contentMax
+		lp = (mainW - cw) / 2
+	}
+	mainLines := strings.Split(s.View(cw, h), "\n")
+	pad := strings.Repeat(" ", lp)
 	out := make([]string, h)
 	for i := 0; i < h; i++ {
 		ml := ""
 		if i < len(mainLines) {
 			ml = mainLines[i]
 		}
-		out[i] = " " + fit(ml, mainW) + " "
+		out[i] = " " + fit(pad+fit(ml, cw), mainW) + " "
 	}
 	if m.overlay != nil {
 		m.drawOverlay(out)
 	}
+	m.drawToast(out)
 	return strings.Join(out, "\n")
 }
 
-// drawOverlay dims the screen and draws the overlay in a centred box.
+// drawOverlay dims the screen and draws the overlay as a raised panel a
+// quarter of the way down: title row, then its content, padded, no border.
 func (m Model) drawOverlay(out []string) {
 	h := len(out)
 	iw, ih := m.overlay.Size(m.w, h)
-	iw = clamp(iw, 1, m.w-2)
-	ih = clamp(ih, 1, h-2)
-	bw, bh := iw+2, ih+2
-	x0 := (m.w - bw) / 2
-	y0 := max((h-bh)/3, 0)
-	if _, ok := m.overlay.(*palette); ok {
-		y0 = min(2, max(h-bh, 0))
+	padX := 3
+	if m.w < 70 {
+		padX = 2
 	}
+	iw = clamp(iw, 1, m.w-2*padX-2)
+	title := m.overlay.Title()
+	head := 0
+	if title != "" {
+		head = 2
+	}
+	ih = clamp(ih, 1, h-2-head)
+	lines := make([]string, 0, ih+head)
+	if title != "" {
+		lines = append(lines, spread(theme.Title.Render(title), m.env.mark("key:esc", theme.Dim.Render("esc")), iw), "")
+	}
+	lines = append(lines, strings.Split(m.overlay.View(iw, ih), "\n")...)
+	for len(lines) < ih+head {
+		lines = append(lines, "")
+	}
+	box := panel(lines[:ih+head], iw+2*padX, padX, 1)
+	bw, bh := iw+2*padX, len(box)
+	x0 := (m.w - bw) / 2
+	y0 := clamp(h/4-1, 0, max(h-bh, 0))
 	*m.ovRect = rect{x: x0, y: y0 + 1, w: bw, h: bh} // +1: the header line
 	for i := range out {
 		out[i] = theme.Rule.Render(ansi.Strip(out[i]))
 	}
-	content := strings.Split(m.overlay.View(iw, ih), "\n")
-	border := theme.Rule
-	if _, ok := m.overlay.(*palette); ok {
-		border = theme.AccentFg
-	}
-	title := m.overlay.Title()
-	top := strings.Repeat("─", iw)
-	if title != "" && iw > len(title)+4 {
-		top = "─ " + theme.Title.Render(title) + border.Render(" "+strings.Repeat("─", iw-width(title)-3))
-	}
-	box := make([]string, 0, bh)
-	box = append(box, border.Render("╭")+border.Render(top)+border.Render("╮"))
-	for i := 0; i < ih; i++ {
-		l := ""
-		if i < len(content) {
-			l = content[i]
-		}
-		box = append(box, border.Render("│")+fit(l, iw)+border.Render("│"))
-	}
-	box = append(box, border.Render("╰"+strings.Repeat("─", iw)+"╯"))
 	for i, bl := range box {
-		y := y0 + i
-		if y >= h {
-			break
+		if y := y0 + i; y < h {
+			out[y] = splice(out[y], x0, bl, m.w)
 		}
-		bg := ansi.Strip(out[y])
-		left := ansi.Truncate(bg, x0, "")
-		left += strings.Repeat(" ", max(x0-width(left), 0))
-		right := ansi.TruncateLeft(bg, x0+bw, "")
-		out[y] = theme.Rule.Render(left) + bl + theme.Rule.Render(right)
 	}
 }
 
-// footerView is the bottom line: what you can do here (clickable), or a
-// passing message, with ctrl+k on the right.
+// drawToast floats the passing message in a small raised panel at the top
+// right of the body, with a bar in its colour.
+func (m Model) drawToast(out []string) {
+	st := m.env.State
+	if st.Toast == "" || !m.env.Now().Before(st.ToastUntil) || len(out) < 4 {
+		return
+	}
+	bar, glyph := theme.Dim, ""
+	switch st.ToastLevel {
+	case lvlOK:
+		bar, glyph = theme.OK, theme.GlyphOK+" "
+	case lvlWarn:
+		bar, glyph = theme.Warning, theme.GlyphWarn+" "
+	case lvlErr:
+		bar, glyph = theme.Err, theme.GlyphFail+" "
+	}
+	maxW := min(60, m.w-6)
+	text := wrap(glyph+st.Toast, maxW-4)
+	if len(text) > 3 {
+		text = append(text[:2], trunc(strings.Join(text[2:], " "), maxW-4))
+	}
+	tw := 0
+	for _, l := range text {
+		tw = max(tw, width(l))
+	}
+	bw := tw + 4
+	seq := bgSeq(theme.Element)
+	x0 := m.w - bw - 2
+	for i, l := range text {
+		if i+1 >= len(out) {
+			break
+		}
+		line := bar.Render("┃") + paint(" "+l+"  ", bw-1, seq)
+		out[i] = splice(out[i], x0, line, m.w)
+	}
+}
+
+// footerView is the status bar: context on the left (project, branch,
+// Fleet Cloud), what you can do here on the right, ending with help and
+// ctrl+k. A passing "press ctrl+c again" takes the left side.
 func (m Model) footerView() string {
-	right := m.env.mark("key:ctrl+k", theme.Key.Render("ctrl+k")+theme.Dim.Render(" commands")) + " "
+	left := ""
+	switch {
+	case m.quitArmed:
+		left = theme.Warning.Render("Press ctrl+c again to quit")
+	case m.contextInFooter():
+		left = m.contextText()
+	}
+	return spread(" "+left, m.footerRight()+" ", m.w)
+}
+
+// footerRight is the hints and, when there's room, ? help and ctrl+k.
+func (m Model) footerRight() string {
+	hints := m.footerHints()
+	if m.overlay != nil && hints != "" {
+		return hints // the popup's own keys say how to close it
+	}
+	right := m.env.mark("key:ctrl+k", theme.Key.Render("ctrl+k")+theme.Dim.Render(" commands"))
 	if m.w >= 90 {
 		right = m.env.mark("key:?", theme.Key.Render("?")+theme.Dim.Render(" help")) + theme.Dim.Render("  ") + right
 	}
-	return spread(" "+m.footerLeft(), right, m.w)
+	if hints == "" {
+		return right
+	}
+	if width(hints)+width(right)+5 > m.w {
+		return hints
+	}
+	return hints + "    " + right
 }
 
-func (m Model) footerLeft() string {
-	st := m.env.State
-	if m.quitArmed {
-		return theme.Warning.Render("Press ctrl+c again to quit")
-	}
-	if st.Toast != "" && m.env.Now().Before(st.ToastUntil) {
-		style := theme.Base
-		glyph := ""
-		switch st.ToastLevel {
-		case lvlOK:
-			style, glyph = theme.OK, theme.GlyphOK+" "
-		case lvlWarn:
-			style, glyph = theme.Warning, theme.GlyphWarn+" "
-		case lvlErr:
-			style, glyph = theme.Err, theme.GlyphFail+" "
-		}
-		return style.Render(glyph) + st.Toast
-	}
+func (m Model) footerHints() string {
 	if m.overlay != nil {
 		return m.overlay.Hint()
 	}

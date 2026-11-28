@@ -1,0 +1,40 @@
+ muster  ›  Settings                                                                            ~/.muster/settings.json
+                      │
+    ▸ Global          │
+      Deploy order    │  ▸ Colour                  ‹ auto ›  When the CLI uses colour
+                      │    Keep deploy logs (days) 7
+      Services        │    Default stack           ‹ bare ›
+        redis         │    Health timeout (s)      10
+        api           │    Check for updates       ‹ on ›
+        web           │    Interactive UI          ‹ go ›
+        worker        │    Minimal mode            ○ off
+                      │    Mouse in muster-tui     ‹ on ›
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+                      │
+ acme-store  ⎇ main           ↑↓ field · enter change · [ ] section · ctrl+s save · e editor    ? help  ctrl+k commands

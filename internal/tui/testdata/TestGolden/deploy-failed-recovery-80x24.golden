@@ -1,4 +1,4 @@
- muster  acme-store  ⎇ main  ›  Deploy                     ✕ redis failed · 0ms
+ muster  ›  Deploy                    ✕ redis failed · 0ms   acme-store  ⎇ main
 
   ✕ redis                                                                   0ms
     ✕ run deploy.sh                                                         0ms
@@ -21,4 +21,4 @@
    Full log: /p/.muster/logs/redis-deploy.log · Ctrl+O
 
  [Retry]  Rollback   Skip   Abort
- r retry · b rollback · s skip · a abort                        ctrl+k commands
+                     r retry · b rollback · s skip · a abort    ctrl+k commands

@@ -1,0 +1,55 @@
+ muster  ›  Docker
+ [Containers 3]  Images 3   Volumes 1   Disk
+
+    Name                       Status                   Ports          CPU    Memory     Image
+ ▸● acme-api-1                 up 5 minutes (healthy)   :8080→8080     3.10%  160MiB     acme/api:4f2a9c1
+  ● acme-redis-1               up 2 hours               :6379→6379     0.42%  12.1MiB    redis:7
+  ○ acme-web-1                 exited (137) 2 days ago                                   nginx:alpine
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ acme-store  ⎇ main                                                                                                    l logs · r restart · s stop/start · x shell · ←→ tabs    ? help  ctrl+k commands

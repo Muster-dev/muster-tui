@@ -1,0 +1,55 @@
+ muster  ›  Deploy                                                                                                                                                              ⠹ api · deploy.sh · 0ms
+
+  ⠹ api                                                                                                                                                                                             0ms
+    ✓ git pull origin/main                                                                                                                                                                          0ms
+    ⠹ run deploy.sh                                                                                                                                                                                 0ms
+      │ #7 [build 3/6] COPY package*.json ./
+      │ #8 [build 4/6] RUN npm ci
+      │ #9 [build 5/6] RUN npm run build
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ acme-store  ⎇ main                                                                                                                             ctrl+o full log · esc cancel    ? help  ctrl+k commands

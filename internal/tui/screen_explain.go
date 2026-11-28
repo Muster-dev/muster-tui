@@ -188,59 +188,55 @@ func exitCodeOf(ex engine.Explanation) int {
 	return 0
 }
 
+// View is a card: what failed as the headline, the likely cause and what
+// to try, and the next actions.
 func (s *explainScreen) View(w, h int) string {
-	lines := []string{""}
+	iw := cardInner(w)
+	back := s.env.hints([]KeyHelp{{"l", "logs"}, {"esc", "back"}})
 	switch {
 	case !s.loaded:
-		lines = append(lines, theme.AccentFg.Render(s.env.Spin())+" Reading the last failure…")
-		return block(lines, w, h)
+		return card{icon: theme.AccentFg.Render(s.env.Spin()), headline: theme.Title.Render("Reading the last failure…")}.view(w, h)
 	case s.err != nil:
-		lines = append(lines, theme.Err.Render(theme.GlyphFail)+" Couldn't explain it")
-		for _, l := range wrap(errText(s.err), w-2) {
-			lines = append(lines, "  "+theme.Dim.Render(l))
-		}
-		lines = append(lines, "", theme.Dim.Render("Press l to read the logs yourself, or esc to go back."))
-		return block(lines, w, h)
+		return card{icon: theme.Err.Render(theme.GlyphFail), headline: theme.Err.Render("Couldn't explain it"), body: wrapDim(errText(s.err), iw), actions: back}.view(w, h)
 	case s.ex.Reason == "no_logs" || (s.ex.Log == "" && !s.ex.Matched):
-		what := "no failed deploys recorded in this project"
+		what := "No failed deploys recorded in this project."
 		if s.svc != "" {
-			what = s.svc + " has no deploy logs"
+			what = s.svc + " has no deploy logs."
 		}
-		lines = append(lines, "Nothing to explain yet — "+what+".", "", theme.Dim.Render("When a deploy fails, explain shows why."))
-		return block(lines, w, h)
+		return card{icon: theme.OK.Render(theme.GlyphOK), headline: theme.Title.Render("Nothing to explain yet"), sub: what, body: wrapDim("When a deploy fails, explain shows why.", iw), actions: s.env.hints([]KeyHelp{{"esc", "back"}})}.view(w, h)
 	}
 	ex := s.ex
-	lines = append(lines, section(s.headline()))
+	c := card{icon: theme.Err.Render(theme.GlyphFail), headline: theme.Title.Render(s.headline())}
 	if ex.Log != "" {
-		lines = append(lines, theme.Dim.Render("Log: "+relPath(s.env, ex.Log)))
+		c.sub = "Log: " + relPath(s.env, ex.Log)
 	}
-	lines = append(lines, "")
+	var lines []string
 	if !ex.Matched || ex.Hint == nil {
 		lines = append(lines, theme.Warning.Render(theme.GlyphWarn+" No known problem pattern matched."),
 			theme.Dim.Render("Read the log (l), run doctor, or ask the assistant."))
 	} else {
-		lines = append(lines, hintLines(ex.Hint, w)...)
+		lines = append(lines, hintLines(ex.Hint, iw)...)
 		if ex.Hint.Line != "" {
-			lines = append(lines, theme.Dim.Render(trunc("Matched: "+ex.Hint.Line, w)))
+			lines = append(lines, theme.Dim.Render(trunc("Matched: "+ex.Hint.Line, iw)))
 		}
 		if len(ex.Hints) > 1 {
 			var ids []string
 			for _, x := range ex.Hints[1:] {
 				ids = append(ids, x.ID)
 			}
-			lines = append(lines, theme.Dim.Render(trunc("Also seen in the log: "+strings.Join(ids, ", "), w)))
+			lines = append(lines, theme.Dim.Render(trunc("Also seen in the log: "+strings.Join(ids, ", "), iw)))
 		}
 		if ex.Hint.Docs != "" {
-			lines = append(lines, theme.Dim.Render(trunc("More: "+ex.Hint.Docs, w)))
+			lines = append(lines, theme.Dim.Render(trunc("More: "+ex.Hint.Docs, iw)))
 		}
 		if ex.Hint.Fix != nil {
 			lines = append(lines, "", theme.OK.Render("Fix available: ")+ex.Hint.Fix.Label)
 		}
 	}
 	if len(s.fixOut) > 0 || s.env.Tasks.Running(s.fixID) {
-		lines = append(lines, "", rule(w))
+		lines = append(lines, "")
 		for _, l := range tail(s.fixOut, 6) {
-			lines = append(lines, theme.Dim.Render(trunc(l, w)))
+			lines = append(lines, theme.Dim.Render(trunc(l, iw)))
 		}
 		switch {
 		case s.env.Tasks.Running(s.fixID):
@@ -251,7 +247,9 @@ func (s *explainScreen) View(w, h int) string {
 			lines = append(lines, theme.OK.Render(theme.GlyphOK+" Fix applied")+theme.Dim.Render(" — deploy again with d"))
 		}
 	}
-	return block(lines, w, h)
+	c.body = lines
+	c.actions = s.env.hints(s.Footer())
+	return c.view(w, h)
 }
 
 // headline: "api — deploy failed (exit 1)".

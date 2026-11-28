@@ -43,6 +43,11 @@ func (d *dashboard) serversHome() bool {
 	return st.Project == nil && (len(st.Fleet.Machines) > 0 || !st.FleetLoaded)
 }
 
+// Wide: the servers home goes master-detail on wide terminals.
+func (d *dashboard) Wide() bool {
+	return d.env.State.Project == nil && d.serversHome() && d.srv.Wide()
+}
+
 func (d *dashboard) Capturing() bool { return d.env.State.Project == nil && d.srv.Capturing() }
 
 func (d *dashboard) Update(msg tea.Msg) (Screen, tea.Cmd) {
@@ -174,34 +179,49 @@ func (d *dashboard) Keys() []KeyHelp {
 	return []KeyHelp{{"↑ ↓ / j k", "select a service or server"}, {"enter", "open it"}, {"d", "deploy (servers ask first)"}, {"L", "logs of the selected service"}, {"r", "check health now"}, {"D", "Docker"}}
 }
 
+// welcome is the launcher shown with no project and no servers: the
+// wordmark, a tagline and the few things worth doing first, centred.
 func (d *dashboard) welcome(w, h int) string {
-	var lines []string
-	add := func(s ...string) { lines = append(lines, s...) }
-	add(section("Welcome to muster"), "")
-	add(wrap("There's no muster.json in this folder and no servers yet. Pick one to get going:", w)...)
-	add("")
-	opt := func(id, label, key, desc string) {
-		add("  " + d.env.mark("home:"+id, button(label, false)) + " " + fit(theme.Key.Render(key), 2) + theme.Dim.Render(desc))
+	type opt struct{ id, key, label, desc string }
+	opts := []opt{
+		{"setup", "s", "Set up this folder", "scan it and create muster.json"},
+		{"fleet add", "a", "Add a server", "deploy to it over SSH or Fleet Cloud"},
 	}
-	opt("setup", "Set up this folder", "s", "scan it and create muster.json")
-	opt("fleet add", "Add a server", "a", "deploy to it over SSH or Fleet Cloud")
 	if !d.env.State.Cloud.LoggedIn {
-		opt("cloud login", "Sign in to Fleet Cloud", "c", "reach servers through the relay")
+		opts = append(opts, opt{"cloud login", "c", "Sign in to Fleet Cloud", "reach servers through the relay"})
 	}
-	opt("docker", "Docker", "D", "containers, images and disk on this computer")
+	opts = append(opts, opt{"docker", "D", "Docker", "containers, images and disk here"})
+	keyW, labelW := 8, 24
+	colW := min(w, keyW+labelW+36)
+	var lines []string
+	lines = append(lines, centerIn(theme.Brand.Render("m u s t e r"), colW), "")
+	lines = append(lines, centerIn(theme.Dim.Render("Deploy anything, anywhere — from one place."), colW), "", "")
+	for _, o := range opts {
+		row := fit(theme.Key.Render(o.key), keyW) + fit(theme.Base.Render(o.label), labelW) + theme.Dim.Render(o.desc)
+		lines = append(lines, d.env.mark("home:"+o.id, trunc(row, colW)))
+	}
+	lines = append(lines, d.env.mark("key:ctrl+k", fit(theme.Key.Render("ctrl+k"), keyW)+fit(theme.Base.Render("Commands"), labelW)+theme.Dim.Render("everything else, by name")))
 	if len(d.projects) > 0 {
-		add("", section("Your projects"))
+		lines = append(lines, "", "", theme.Dim.Render("Your projects"))
 		for i, p := range d.projects {
-			if i == 6 {
-				add(theme.Dim.Render(fmt.Sprintf("  … %d more · muster projects", len(d.projects)-6)))
+			if i == 4 {
+				lines = append(lines, theme.Dim.Render(fmt.Sprintf("… %d more · muster projects", len(d.projects)-4)))
 				break
 			}
-			add("  " + fit(p.Name, 18) + " " + theme.Dim.Render(p.Path))
+			lines = append(lines, fit(p.Name, keyW+labelW-8)+"        "+theme.Dim.Render(trunc(p.Path, colW-keyW-labelW)))
 		}
-		add(theme.Dim.Render("  Open one with ") + code("muster-tui -C <path>"))
+		lines = append(lines, theme.Dim.Render("Open one with ")+code("muster-tui -C <path>"))
 	}
-	return block(lines, w, h)
+	top := max((h-len(lines))*2/5, 0)
+	out := make([]string, 0, h)
+	for i := 0; i < top; i++ {
+		out = append(out, "")
+	}
+	return block(append(out, column(lines, colW, w)...), w, h)
 }
+
+// centerIn centres s in a w-cell line (padding both sides).
+func centerIn(s string, w int) string { return fit(center(s, w), w) }
 
 func (d *dashboard) View(w, h int) string {
 	st := d.env.State

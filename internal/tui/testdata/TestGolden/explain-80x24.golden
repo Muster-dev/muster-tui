@@ -1,0 +1,24 @@
+ muster  ›  Explain
+
+
+
+    ✕  api — deploy failed (exit 124)
+    Log: /p/.muster/logs/api-deploy.log
+
+    Likely cause: The api hook ran longer than its 2s deploy_timeout and was
+    stopped (exit 124).
+    Try: If the deploy is just slow, raise deploy_timeout for this service
+    in muster.json.
+    More: https://getmuster.dev/docs/troubleshooting#deploy-timeout
+
+    Fix available: Raise api deploy_timeout to 4s
+
+    f fix  ·  l logs  ·  d deploy  ·  esc back
+
+
+
+
+
+
+
+ acme-store  ⎇ main     f fix · l logs · d deploy · esc back    ctrl+k commands

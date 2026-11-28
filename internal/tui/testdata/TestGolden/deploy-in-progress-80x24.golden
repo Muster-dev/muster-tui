@@ -1,4 +1,4 @@
- muster  acme-store  ⎇ main  ›  Deploy                  ⠹ api · deploy.sh · 0ms
+ muster  ›  Deploy                                      ⠹ api · deploy.sh · 0ms
 
   ⠹ api                                                                     0ms
     ✓ git pull origin/main                                                  0ms
@@ -21,4 +21,4 @@
 
 
 
- ctrl+o full log · esc cancel                                   ctrl+k commands
+ acme-store  ⎇ main             ctrl+o full log · esc cancel    ctrl+k commands

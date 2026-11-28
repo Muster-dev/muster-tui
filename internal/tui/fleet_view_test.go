@@ -50,7 +50,7 @@ func TestFleetTestUsesJSONWhenSupported(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "argv")
 	f := startFlow(t, fleetDeps(t, true, "FAKE_LOG="+log), 80, 24)
 	f.send(fleetHelp(true), fleetFixture, runLineMsg{"fleet test"}).
-		wait("Connected · muster OK · 120 ms", "Operation timed", "1 of 2 failed", "enter/esc back", "r run again", "y copy")
+		wait("Connected · muster OK · 120 ms", "Operation", "1 of 2 failed", "enter/esc back", "r run again", "y copy")
 	m, v := f.end()
 	argv, _ := os.ReadFile(log)
 	if !strings.Contains(string(argv), "fleet test --json") {
@@ -68,7 +68,7 @@ func TestFleetTestFallsBackToText(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "argv")
 	f := startFlow(t, fleetDeps(t, false, "FAKE_LOG="+log), 80, 24)
 	f.send(fleetHelp(false), fleetFixture, runLineMsg{"fleet test"}).
-		wait("byricky", "Connected · muster OK", "isn't paired", "SSH couldn't connect", "2 of 4 failed")
+		wait("byricky", "Connected · muster OK", "isn't", "SSH couldn't connect", "2 of 4 failed")
 	_, v := f.end()
 	argv, _ := os.ReadFile(log)
 	if strings.Contains(string(argv), "--json") {
@@ -131,5 +131,18 @@ func TestCleanOutputStripsBoxesAndSaysServer(t *testing.T) {
 	got := strings.Join(cleanOutput(nil, in), "\n")
 	if strings.ContainsAny(got, "┌│└\x1b\r") || !strings.Contains(got, "All 2 servers passed") || strings.Contains(got, "\n\n\n") {
 		t.Fatalf("%q", got)
+	}
+}
+
+func TestFleetStatusCardCountsOnlineServers(t *testing.T) {
+	m := New(fleetDeps(t, true))
+	s := newFleetResult(m.env, "status", "")
+	s.status = []fleet.MachineStatus{byrickyHealth.st[0], {Machine: "edge", Reachable: false}}
+	if got := s.statusSummary(); got != "1 of 2 online" {
+		t.Fatalf("summary %q", got)
+	}
+	s.status = s.status[:1]
+	if got := s.statusSummary(); got != "Online" || !s.allOnline() {
+		t.Fatalf("summary %q", got)
 	}
 }

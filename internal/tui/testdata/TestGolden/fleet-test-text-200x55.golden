@@ -1,0 +1,55 @@
+ muster  ›  Servers › Connection test
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                         ✕  2 of 4 failed
+                                                         4 servers · tested 14:00
+
+                                                         ! 10-0-2-100            SSH          Connected, but this computer isn't paired with it
+                                                                                              yet
+                                                         ● byricky               Fleet Cloud  Connected · muster OK
+                                                         ✕ a-very-long-server-…  SSH          SSH couldn't connect
+                                                         ✕ edge                  SSH          Connected, but the server rejected this
+                                                                                              computer's token — pair again
+
+                                                         r run again  ·  enter back  ·  y copy
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ⎇ main                                                                                                                                enter/esc back · r run again · y copy    ? help  ctrl+k commands

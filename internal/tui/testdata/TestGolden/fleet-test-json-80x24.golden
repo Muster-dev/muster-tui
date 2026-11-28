@@ -1,19 +1,17 @@
- muster  ⎇ main  ›  Servers › Connection test
-
- ● byricky  Fleet Cloud  Connected · muster OK · 120 ms
- ✕ edge     SSH          ssh: connect to host 10.0.0.9 port 22: Operation timed
-                         out
-
- 1 of 2 failed
+ muster  ›  Servers › Connection test
 
 
 
 
 
+    ✕  1 of 2 failed
+    2 servers · tested 14:00
 
+    ● byricky  Fleet Cloud  Connected · muster OK · 120 ms
+    ✕ edge     SSH          ssh: connect to host 10.0.0.9 port 22: Operation
+                            timed out
 
-
-
+    r run again  ·  enter back  ·  y copy
 
 
 
@@ -21,4 +19,6 @@
 
 
 
- enter/esc back · r run again · y copy                          ctrl+k commands
+
+
+ ⎇ main                enter/esc back · r run again · y copy    ctrl+k commands

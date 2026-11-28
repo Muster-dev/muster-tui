@@ -927,6 +927,14 @@ func (d *deployScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 			return d, func() tea.Msg { return backMsg{} }, true
 		case "esc":
 			return d, func() tea.Msg { return backMsg{} }, true
+		case "s":
+			if !d.dry {
+				return d, runLine("status"), true
+			}
+		case "L":
+			if !d.dry && len(d.runs) > 0 {
+				return d, runLine("logs " + d.runs[clamp(d.sel, 0, len(d.runs)-1)].key), true
+			}
 		}
 	}
 	switch key {
@@ -989,6 +997,9 @@ func (d *deployScreen) View(w, h int) string {
 		return block(head, w, h)
 	}
 
+	if (d.phase == phDone || d.phase == phAborted) && len(d.runs) > 0 {
+		return d.doneCard(w, h)
+	}
 	var body []string
 	for i, r := range d.runs {
 		body = append(body, d.runLines(i, r, w)...)
@@ -1191,6 +1202,27 @@ func (d *deployScreen) summaryLines(w int) []string {
 	return out
 }
 
+// doneCard sums a finished deploy up as a card: the outcome as the
+// headline, one aligned row per service, and what to do next.
+func (d *deployScreen) doneCard(w, h int) string {
+	iw := cardInner(w)
+	sum := d.summaryLines(iw)
+	c := card{headline: sum[1]}
+	if !d.started.IsZero() {
+		c.sub = "started " + d.started.Format("15:04")
+	}
+	for i, r := range d.runs {
+		row := d.runLines(i, r, min(iw, 64))[0]
+		c.body = append(c.body, row)
+	}
+	keys := []KeyHelp{{"enter", "back"}, {"ctrl+o", "full log"}, {"s", "status"}}
+	if len(d.runs) > 0 {
+		keys = append(keys, KeyHelp{"L", "logs " + d.runs[clamp(d.sel, 0, len(d.runs)-1)].key})
+	}
+	c.actions = d.env.hints(keys)
+	return c.view(w, h)
+}
+
 func (d *deployScreen) confirmView(w, h int) string {
 	lines := []string{"", fmt.Sprintf("Deploy %s, in this order:", plural(len(d.runs), "service")), ""}
 	for i, r := range d.runs {
@@ -1360,3 +1392,6 @@ func relPath(env *Env, p string) string {
 	}
 	return p
 }
+
+// Wide: tables and log streams use the whole width.
+func (d *deployScreen) Wide() bool { return true }

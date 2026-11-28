@@ -1,4 +1,4 @@
- muster  ⎇ main  ›  Servers › byricky                    ● Online · 2/2 healthy
+ muster  ›  Servers › byricky                            ● Online · 2/2 healthy
 
  Fleet Cloud · agent ricky@agent-byricky
  Runs muster on the server · muster 0.7.1
@@ -21,4 +21,4 @@
 
 
 
- enter run · d deploy · s status · esc back                     ctrl+k commands
+ ⎇ main           enter run · d deploy · s status · esc back    ctrl+k commands

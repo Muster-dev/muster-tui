@@ -1,0 +1,55 @@
+ muster
+
+                Servers                       checked just now      byricky                                                                                         ● Online · 2/2 healthy
+
+                ▸ ● byricky                        2/2 healthy      Fleet Cloud · agent ricky@agent-byricky
+                  ○ edge                           Not checked      Runs muster on the server · muster 0.7.1
+
+                Sign in to Fleet Cloud: press c                     Services
+                                                                    ● pond    healthy
+                                                                    ● web     healthy
+
+                                                                    Actions
+                                                                      Deploy           d   muster fleet deploy byricky
+                                                                      Status           s   muster fleet status byricky
+                                                                      Test connection  t   muster fleet test byricky
+                                                                      Rollback         b   muster fleet rollback byricky
+                                                                      Logs             l   recent log lines from a service on the server
+                                                                      Restart          R   restart services on the server (asks first)
+                                                                      Ask assistant    a   needs a project folder (muster.json)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ⎇ main                                                                                                         enter actions · d deploy · t test · a add server · r refresh    ? help  ctrl+k commands

@@ -1,0 +1,24 @@
+ muster
+ Servers                                                       checked just now
+
+   Server   Status           Connection                            Services
+ ▸ byricky  ● Online         Fleet Cloud                           2/2 healthy
+   edge     ○ Not checked    SSH · deploy@10.0.0.9                 —
+
+ ! Not signed in to Fleet Cloud — press c to sign in
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ⎇ main     enter open · d deploy · a add server · r refresh    ctrl+k commands
