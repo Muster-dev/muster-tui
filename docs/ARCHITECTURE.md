@@ -33,10 +33,24 @@ main.go ──► tui.New(Deps) ──► tea.Program (alt screen, mouse unless 
 ## The root model (`internal/tui/app.go`)
 
 ```
- header      muster · project · ⎇ branch · › screen · summary · task spinner · Fleet Cloud
+ header      muster · project · ⎇ branch · › breadcrumb · screen status · background tasks · Fleet Cloud
  body        the active Screen (overlays draw in a centred box over it, dimmed)
  footer      clickable hints for this screen (≤ 5)                ? help  ctrl+k commands
 ```
+
+* **One header line.** A screen's title is the breadcrumb; screens never
+  repeat it in their body. Screens that implement `Statuser` put a short
+  status on the right of the header ("● following", "✕ api failed · 12s",
+  "unsaved — ctrl+s saves"). The header's task spinner leaves out tasks the
+  active screen owns (it shows those itself).
+* **Footers match the screen.** Screens implement `Footerer` and list at
+  most ~5 keys for their current state; nothing draws a key row of its own
+  above the footer. A key written `enter/esc` replays its first key when
+  clicked. Result views use `enter/esc back · r run again · y copy`; only the
+  logs viewer shows search/level/wrap keys.
+* **CLI text.** Where the CLI has no JSON, output shown in the TUI goes
+  through `cleanOutput` (no colour codes or box drawing, "server" for
+  "machine", no runs of blank lines).
 
 * **Layout** (`layout.go`): chrome is 2 rows; the screen gets `w-2 × h-2`.
   Below 60×16 a "terminal too small" view is shown instead. Overlays
@@ -99,7 +113,8 @@ Live screens are cached by key, so a deploy keeps running and updating while you
 | Screen | File | Data source |
 |---|---|---|
 | Servers home / Servers | `screen_servers.go` | fleet list + `FleetHealth`; actions route to `fleet deploy/status/test/rollback` (deploy and rollback confirm first), add-server form → `muster fleet add` |
-| Server | `screen_server.go` | one server: connection, mode, services from `fleet status --json`, actions; Logs/Restart disabled (no fleet command), no shell for cloud servers; pair screen → `muster fleet pair <name> --token` |
+| Server | `screen_server.go` | one server: connection, mode, muster version, services from `fleet status --json`, actions; Logs (`fleet logs` → logs viewer) and Restart (pick a service, confirm, `fleet restart --yes --json`) when the CLI has them, disabled with a reason otherwise; no shell for cloud servers; pair screen → `muster fleet pair <name> --token` |
+| Fleet result | `screen_fleet.go` | `fleet test` (`--json`, or the text output parsed by `fleet.ParseTestText`) and `fleet status --json` as a card: dot, name, Fleet Cloud/SSH, what happened, summary line; r runs again, y copies |
 | Onboarding | `screen_onboarding.go` | `config.Scan` preview → `muster setup --stack … --services … --order … --health …` (raw stream) |
 | Dashboard | `screen_dashboard.go` | shared state (`status --json`, `history --json`, `doctor --json`, docker summary, fleet health); with no project it is the servers home (or a welcome) |
 | Deploy | `screen_deploy.go` | muster ≥ 0.7: one `deploy --json --stop-on-failure [--from svc]` stream, events routed by service; older: `deploy --json <svc>` per service. Stops on failure with Retry / Rollback / Skip / Abort, Likely cause / Try (`hint` event or `explain --json`), Fix (`explain --fix --yes` after a confirm), Explain with AI; dry run uses one `deploy --json --dry-run` call |
@@ -136,7 +151,9 @@ Cancelling kills the child's process group (`Setpgid` + `cmd.Cancel`), so
 ## Engine contract and fallbacks
 
 * **Version gating:** `muster --version` is read at startup into
-  `State.Caps` (`engine.CapsFor`). `Caps.EngineAPI` (muster ≥ 0.7.0) turns on
+  `State.Caps` (`engine.CapsFor`); `muster fleet --help` is read too
+  (`Caps.WithFleetHelp`) because fleet commands land between releases:
+  `FleetTestJSON`, `FleetLogs`, `FleetRestart`. `Caps.EngineAPI` (muster ≥ 0.7.0) turns on
   the engine-API code paths; older CLIs keep the earlier ones and commands
   that need 0.7 say how to update (`Model.needV07`).
 
