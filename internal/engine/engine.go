@@ -208,3 +208,9 @@ func (e *Engine) Raw(ctx context.Context, args ...string) (*proc.LineStream, err
 func (e *Engine) RunJSON(ctx context.Context, v any, args ...string) error {
 	return e.runJSON(ctx, v, false, args...)
 }
+
+// RunJSONTolerant is RunJSON for commands that exit non-zero when a check
+// fails but still print their JSON answer (fleet test, fleet restart).
+func (e *Engine) RunJSONTolerant(ctx context.Context, v any, args ...string) error {
+	return e.runJSON(ctx, v, true, args...)
+}

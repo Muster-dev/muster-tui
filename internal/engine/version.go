@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // Version is a parsed `muster --version`.
@@ -50,6 +51,35 @@ type Caps struct {
 	Version Version // valid when Known
 	// EngineAPI: muster ≥ 0.7.0.
 	EngineAPI bool
+	// Fleet commands, detected from `muster fleet --help` (see FleetCapsFor):
+	// FleetHelpKnown is set once the help text was read.
+	FleetHelpKnown bool
+	FleetTestJSON  bool // fleet test [target] --json
+	FleetLogs      bool // fleet logs <server> <service> [--tail N] [--json]
+	FleetRestart   bool // fleet restart <server> [service...] --yes [--json]
+}
+
+// WithFleetHelp records which fleet commands `muster fleet --help` lists.
+// New fleet subcommands land between releases, so they're detected from
+// the help text instead of the version number.
+func (c Caps) WithFleetHelp(help string) Caps {
+	c.FleetHelpKnown = true
+	c.FleetTestJSON, c.FleetLogs, c.FleetRestart = false, false, false
+	for _, l := range strings.Split(help, "\n") {
+		f := strings.Fields(l)
+		if len(f) == 0 {
+			continue
+		}
+		switch f[0] {
+		case "test":
+			c.FleetTestJSON = strings.Contains(l, "--json")
+		case "logs":
+			c.FleetLogs = true
+		case "restart":
+			c.FleetRestart = true
+		}
+	}
+	return c
 }
 
 // CapsFor derives capabilities from `muster --version` output.

@@ -1,0 +1,10 @@
+
+  ┌─Connectivity────────────────────────────────────┐
+  │  ● 10-0-2-100                           unpaired│
+  │  ● byricky                   cloud ok, muster ok│
+  │  ● a-very-long-server-na...             SSH fail│
+  │  ● edge                      SSH ok, token fail│
+  └──────────────────────────────────────────────────┘
+
+  ! 1 passed, 2 failed
+
