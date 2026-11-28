@@ -50,7 +50,7 @@ func (s *serviceScreen) View(w, h int) string {
 	st := s.env.State
 	p := st.Project
 	if p == nil || !p.HasService(s.svc) {
-		return block([]string{section(s.svc), "", theme.Dim.Render("This service is no longer in muster.json.")}, w, h)
+		return block([]string{"", theme.Dim.Render("This service is no longer in muster.json."), "", theme.Dim.Render("Press esc to go back.")}, w, h)
 	}
 	cfg := p.Service(s.svc)
 	ss := st.Svc(s.svc)
@@ -58,19 +58,10 @@ func (s *serviceScreen) View(w, h int) string {
 	var lines []string
 	add := func(x ...string) { lines = append(lines, x...) }
 
-	health := healthGlyph(ss.Shown()) + " " + healthWord(ss.Shown())
-	if ss.Deploying {
-		health = theme.AccentFg.Render(s.env.Spin() + " deploying")
-	} else if ss.LockedBy != nil {
-		health = theme.Warning.Render(theme.GlyphWarn + " being deployed by " + ss.LockedBy.Who())
-	} else if !ss.Since.IsZero() && (ss.Shown() == "healthy" || ss.Shown() == "unhealthy") {
-		health += theme.Dim.Render(" since " + ago(ss.Since, now))
+	add("")
+	if cfg.Name != "" && cfg.Name != s.svc {
+		add(theme.Dim.Render(cfg.Name), "")
 	}
-	title := section(s.svc)
-	if cfg.Name != s.svc {
-		title += theme.Dim.Render("  " + cfg.Name)
-	}
-	add(spread(title, health, w), "")
 
 	kv := func(k, v string) { add(theme.Dim.Render(fit(k, 14)) + v) }
 	kv("Stack", firstNonEmpty(ss.Stack, p.Stack(s.svc), "unknown"))
@@ -174,17 +165,36 @@ func (s *serviceScreen) View(w, h int) string {
 	}
 	add("", section("Recent deploys"))
 	if len(recent) == 0 {
-		add(theme.Dim.Render("  none yet"))
+		add(theme.Dim.Render("  None yet — press d to deploy."))
 	}
 	add(recent...)
-	for len(lines) < h-2 {
-		add("")
-	}
-	add(rule(w), keyHint("d", "deploy", "p", "dry run", "l", "logs", "b", "rollback", "r", "restart", "e", "edit hook", "s", "settings"))
 	return block(lines, w, h)
 }
 
+// Status: health, on the right of the header.
+func (s *serviceScreen) Status() string {
+	st := s.env.State
+	if st.Project == nil || !st.Project.HasService(s.svc) {
+		return ""
+	}
+	ss := st.Svc(s.svc)
+	health := healthGlyph(ss.Shown()) + " " + healthWord(ss.Shown())
+	switch {
+	case ss.Deploying:
+		health = theme.AccentFg.Render(s.env.Spin() + " deploying")
+	case ss.LockedBy != nil:
+		health = theme.Warning.Render(theme.GlyphWarn + " being deployed by " + ss.LockedBy.Who())
+	case !ss.Since.IsZero() && (ss.Shown() == "healthy" || ss.Shown() == "unhealthy"):
+		health += theme.Dim.Render(" since " + ago(ss.Since, s.env.Now()))
+	}
+	return health
+}
+
 func (s *serviceScreen) Hint() string { return "" }
+
+func (s *serviceScreen) Footer() []KeyHelp {
+	return []KeyHelp{{"d", "deploy"}, {"l", "logs"}, {"r", "restart"}, {"b", "rollback"}, {"s", "settings"}}
+}
 
 func (s *serviceScreen) Keys() []KeyHelp {
 	return []KeyHelp{{"d", "deploy"}, {"p", "dry run"}, {"l", "logs"}, {"b", "rollback"}, {"r", "restart"}, {"e", "edit deploy hook"}, {"h", "edit health hook"}, {"s", "settings"}, {"H", "history"}}

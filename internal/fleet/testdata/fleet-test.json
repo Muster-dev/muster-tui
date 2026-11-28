@@ -1,0 +1,1 @@
+{"servers":[{"name":"byricky","transport":"cloud","mode":"muster","ok":true,"connect":"ok","muster":"ok","latency_ms":120,"error":""},{"name":"edge","transport":"ssh","mode":"push","ok":false,"connect":"fail","muster":"skip","latency_ms":0,"error":"ssh: connect to host 10.0.0.9 port 22: Operation timed out"}],"passed":1,"failed":1}

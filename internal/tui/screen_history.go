@@ -18,6 +18,7 @@ type historyScreen struct {
 	sel       int
 	taskID    int
 	loading   bool
+	err       error
 }
 
 func newHistoryScreen(env *Env) *historyScreen { return &historyScreen{env: env} }
@@ -40,8 +41,15 @@ func (s *historyScreen) Init() tea.Cmd {
 }
 
 func (s *historyScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
-	if m, ok := msg.(TaskEndedMsg); ok && m.ID == s.taskID {
-		s.loading = false
+	switch m := msg.(type) {
+	case TaskEndedMsg:
+		if m.ID == s.taskID {
+			s.loading = false
+		}
+	case TaskMsg:
+		if hm, ok := m.Msg.(historyMsg); ok && m.ID == s.taskID {
+			s.err = hm.err
+		}
 	}
 	return s, nil
 }
@@ -102,33 +110,29 @@ func (s *historyScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 
 func (s *historyScreen) View(w, h int) string {
 	now := s.env.Now()
-	var filters []string
-	if s.svcFilter != "" {
-		filters = append(filters, "service "+s.svcFilter)
-	}
-	filters = append(filters, []string{"", "ok only", "failures only"}[s.status], []string{"", "deploys", "rollbacks"}[s.action])
-	var f []string
-	for _, x := range filters {
-		if x != "" {
-			f = append(f, x)
-		}
-	}
-	right := theme.Dim.Render(strings.Join(f, " · "))
-	if s.loading {
-		right = theme.AccentFg.Render(s.env.Spin()) + " " + right
-	}
-	lines := []string{spread(section("History"), right, w), ""}
+	f := s.Status()
+	lines := []string{""}
 	rows := s.rows()
 	if len(rows) == 0 {
-		msg := "No deploys yet."
-		if len(f) > 0 {
-			msg = "Nothing matches these filters · c clears them"
+		switch {
+		case s.loading:
+			lines = append(lines, theme.AccentFg.Render(s.env.Spin())+" Loading history…")
+		case s.err != nil:
+			lines = append(lines, theme.Err.Render(theme.GlyphFail)+" Couldn't read the history")
+			for _, l := range wrap(errText(s.err), w-2) {
+				lines = append(lines, "  "+theme.Dim.Render(l))
+			}
+			lines = append(lines, "", theme.Dim.Render("Press R to try again."))
+		case f != "":
+			lines = append(lines, theme.Dim.Render("Nothing matches these filters — press c to clear them."))
+		default:
+			lines = append(lines, theme.Dim.Render("No deploys yet."), "", theme.Dim.Render("Deploys and rollbacks show up here once you run one."))
 		}
-		lines = append(lines, theme.Dim.Render(msg))
 		return block(lines, w, h)
 	}
-	lines = append(lines, theme.Dim.Render("  "+fit("WHEN", 14)+fit("SERVICE", 14)+fit("ACTION", 10)+fit("RESULT", 10)+"COMMIT"))
-	avail := h - len(lines) - 2
+	svcW := clamp(w/6, 8, 18)
+	lines = append(lines, theme.Dim.Render("  "+fit("When", 14)+fit("Service", svcW)+fit("Action", 10)+fit("Result", 12)+"Commit"))
+	avail := h - len(lines)
 	start := clamp(s.sel-avail+1, 0, max(len(rows)-avail, 0))
 	for i := start; i < len(rows) && i < start+avail; i++ {
 		ev := rows[i]
@@ -144,16 +148,30 @@ func (s *historyScreen) View(w, h int) string {
 		if i == s.sel {
 			cur = theme.AccentFg.Render(theme.GlyphCursor)
 		}
-		lines = append(lines, cur+" "+fit(when, 14)+fit(ev.Service, 14)+fit(ev.Action, 10)+fit(res, 10)+theme.Dim.Render(shortSHA(ev.Commit)))
+		lines = append(lines, trunc(cur+" "+fit(when, 14)+fit(ev.Service, svcW)+fit(ev.Action, 10)+fit(res, 12)+theme.Dim.Render(shortSHA(ev.Commit)), w))
 	}
-	for len(lines) < h-2 {
-		lines = append(lines, "")
-	}
-	lines = append(lines, rule(w), keyHint("s", "service", "f", "result", "a", "action", "c", "clear", "Enter", "open service"))
 	return block(lines, w, h)
 }
 
+// Status: active filters, on the right of the header.
+func (s *historyScreen) Status() string {
+	var f []string
+	if s.svcFilter != "" {
+		f = append(f, "service "+s.svcFilter)
+	}
+	for _, x := range []string{[]string{"", "ok only", "failures only"}[s.status], []string{"", "deploys", "rollbacks"}[s.action]} {
+		if x != "" {
+			f = append(f, x)
+		}
+	}
+	return theme.Dim.Render(strings.Join(f, " · "))
+}
+
 func (s *historyScreen) Hint() string { return "" }
+
+func (s *historyScreen) Footer() []KeyHelp {
+	return []KeyHelp{{"enter", "open service"}, {"s", "service"}, {"f", "result"}, {"a", "action"}, {"c", "clear"}}
+}
 func (s *historyScreen) Keys() []KeyHelp {
 	return []KeyHelp{{"j / k", "move"}, {"s", "filter by service"}, {"f", "filter by result"}, {"a", "filter by action"}, {"c", "clear filters"}, {"Enter", "open the service"}, {"R", "reload"}}
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Muster-dev/muster-tui/internal/fleet"
 	"github.com/Muster-dev/muster-tui/internal/proc"
 	"github.com/Muster-dev/muster-tui/internal/theme"
 	tea "github.com/charmbracelet/bubbletea"
@@ -46,7 +47,10 @@ type logsScreen struct {
 
 	level int // 0 all, 1 warnings+errors, 2 errors
 	wrap  bool
-	onEnd func(error) tea.Cmd
+	// output: a one-shot command's output rather than a log; its lines are
+	// cleaned (no colour codes or box drawing) and its keys are simpler.
+	output bool
+	onEnd  func(error) tea.Cmd
 }
 
 type (
@@ -62,7 +66,30 @@ func newLogsScreen(env *Env, key, title string, follow, fg bool, open lineOpener
 
 // newOutput runs a command and shows its output.
 func newOutput(env *Env, key, title string, fg bool, open lineOpener) *logsScreen {
-	return newLogsScreen(env, "out:"+key, title, false, fg, open)
+	s := newLogsScreen(env, "out:"+key, title, false, fg, open)
+	s.output = true
+	return s
+}
+
+// cleanOutput makes CLI text read cleanly in the TUI: no colour codes or
+// box drawing, "server" for "machine", and no runs of blank lines.
+func cleanOutput(prev []string, in []string) []string {
+	out := make([]string, 0, len(in))
+	lastBlank := len(prev) == 0 || strings.TrimSpace(prev[len(prev)-1]) == ""
+	for _, l := range in {
+		l = strings.TrimRight(l, "\r")
+		if i := strings.LastIndex(l, "\r"); i >= 0 {
+			l = l[i+1:]
+		}
+		l = fleet.ServerWords(fleet.CleanCLIText(l))
+		blank := strings.TrimSpace(l) == ""
+		if blank && lastBlank {
+			continue
+		}
+		lastBlank = blank
+		out = append(out, l)
+	}
+	return out
 }
 
 func newServiceLogs(env *Env, svc string) *logsScreen {
@@ -95,6 +122,22 @@ func newServiceLogs(env *Env, svc string) *logsScreen {
 			return fromLineStream(ls)
 		}
 		return nil, nil, fmt.Errorf("can't read logs without the muster CLI")
+	})
+}
+
+// newFleetLogs shows the last lines of a service's log on a server
+// (`muster fleet logs <server> <service> --tail N --json`); r reloads.
+func newFleetLogs(env *Env, server, svc string) *logsScreen {
+	eng := env.Eng()
+	return newLogsScreen(env, "flogs:"+server+":"+svc, "Servers › "+server+" › Logs · "+svc, false, false, func(ctx context.Context) (<-chan string, func() error, error) {
+		if eng == nil {
+			return nil, nil, fmt.Errorf("can't read logs without the muster CLI")
+		}
+		s, err := fleet.Logs(ctx, eng, server, svc, logsTail)
+		if err != nil {
+			return nil, nil, err
+		}
+		return streamLines(s, logEventLines)
 	})
 }
 
@@ -206,7 +249,11 @@ func (s *logsScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 		}
 		switch in := m.Msg.(type) {
 		case logBatchMsg:
-			s.lines = append(s.lines, in.lines...)
+			add := in.lines
+			if s.output {
+				add = cleanOutput(s.lines, add)
+			}
+			s.lines = append(s.lines, add...)
 			if over := len(s.lines) - maxLogLines; over > 0 {
 				s.lines = s.lines[over:]
 				s.top = max(s.top-over, 0)
@@ -253,7 +300,7 @@ func (s *logsScreen) visible() []int {
 	return out
 }
 
-func (s *logsScreen) bodyHeight() int { return max(s.env.MainH-2, 1) }
+func (s *logsScreen) bodyHeight() int { return max(s.env.MainH-1, 1) }
 
 func (s *logsScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 	if s.searching {
@@ -316,6 +363,11 @@ func (s *logsScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 	case "y":
 		text := strings.Join(tail(s.filteredText(), 2000), "\n")
 		return s, copyCmd(text, fmt.Sprintf("Copied %s", plural(min(len(s.filteredText()), 2000), "line"))), true
+	case "enter":
+		if s.output && !s.running {
+			return s, func() tea.Msg { return backMsg{} }, true
+		}
+		return s, nil, false
 	case "r":
 		if !s.running {
 			s.lines = nil
@@ -394,7 +446,9 @@ func (s *logsScreen) reveal(i, n int) {
 	s.top = clamp(i-h/3, 0, max(n-h, 0))
 }
 
-func (s *logsScreen) View(w, h int) string {
+// Status is shown on the right of the header: following / running / done
+// and any active filters.
+func (s *logsScreen) Status() string {
 	state := ""
 	switch {
 	case s.running && s.follow:
@@ -405,11 +459,13 @@ func (s *logsScreen) View(w, h int) string {
 	case s.running:
 		state = theme.AccentFg.Render(s.env.Spin() + " running")
 	case s.err != nil:
-		state = theme.Err.Render(theme.GlyphFail + " " + trunc(s.err.Error(), w/2))
+		state = theme.Err.Render(theme.GlyphFail + " failed")
 	case s.done && s.follow:
-		state = theme.Dim.Render("stream ended · r restart")
-	case s.done:
+		state = theme.Dim.Render("stream ended")
+	case s.done && s.output:
 		state = theme.OK.Render(theme.GlyphOK + " done")
+	case s.done:
+		state = theme.Dim.Render(plural(len(s.lines), "line"))
 	}
 	var tags []string
 	if s.level == 1 {
@@ -423,14 +479,46 @@ func (s *logsScreen) View(w, h int) string {
 	if s.query != "" {
 		tags = append(tags, "/"+s.query)
 	}
-	head := section(s.title)
 	if len(tags) > 0 {
-		head += "  " + theme.Dim.Render(strings.Join(tags, " · "))
+		t := theme.Dim.Render(strings.Join(tags, " · "))
+		if state == "" {
+			return t
+		}
+		return t + "  " + state
 	}
-	lines := []string{spread(head, state, w)}
-	bodyH := h - 1
+	return state
+}
+
+// doing is what the spinner says while there's no output yet.
+func (s *logsScreen) doing() string {
+	if s.output {
+		return "Running " + strings.ToLower(s.title) + "…"
+	}
+	return "Loading log lines…"
+}
+
+func (s *logsScreen) View(w, h int) string {
+	lines := []string{}
+	bodyH := h
 	if s.searching {
 		bodyH--
+	}
+	var foot []string
+	if s.err != nil && !s.running {
+		foot = append(foot, "")
+		msg := fleet.ServerWords(errText(s.err))
+		for i, l := range wrap(msg, w-2) {
+			g := "  "
+			if i == 0 {
+				g = theme.Err.Render(theme.GlyphFail) + " "
+			}
+			foot = append(foot, g+theme.Err.Render(l))
+		}
+		foot = append(foot, theme.Dim.Render("  Press r to try again."))
+		if len(foot) > bodyH/2 {
+			foot = foot[:max(bodyH/2, 1)]
+		}
+		bodyH -= len(foot)
 	}
 	vis := s.visible()
 	top := s.top
@@ -438,28 +526,34 @@ func (s *logsScreen) View(w, h int) string {
 		top = max(len(vis)-bodyH, 0)
 	}
 	if len(s.lines) == 0 {
-		msg := "waiting for output…"
-		if s.done {
-			msg = "no output"
+		switch {
+		case s.running:
+			lines = append(lines, "", theme.AccentFg.Render(s.env.Spin())+" "+s.doing())
+		case s.err == nil && s.output:
+			lines = append(lines, "", theme.Dim.Render("Finished with no output."))
+		case s.err == nil:
+			lines = append(lines, "", theme.Dim.Render("No log lines yet."), theme.Dim.Render("Press r to load again."))
 		}
-		lines = append(lines, theme.Dim.Render(msg))
+	} else if len(vis) == 0 {
+		lines = append(lines, "", theme.Dim.Render("Nothing matches this level — press L to show everything."))
 	}
-	for i := top; i < len(vis) && len(lines) < bodyH+1; i++ {
+	for i := top; i < len(vis) && len(lines) < bodyH; i++ {
 		raw := s.lines[vis[i]]
 		rows := []string{raw}
 		if s.wrap {
 			rows = wrap(raw, w-1)
 		}
 		for _, r := range rows {
-			if len(lines) >= bodyH+1 {
+			if len(lines) >= bodyH {
 				break
 			}
 			lines = append(lines, s.styleLine(r, i == s.cursor, w))
 		}
 	}
-	for len(lines) < bodyH+1 {
+	for len(lines) < bodyH {
 		lines = append(lines, "")
 	}
+	lines = append(lines, foot...)
 	if s.searching {
 		s.search.Width = w
 		lines = append(lines, s.search.View())
@@ -504,17 +598,26 @@ func (s *logsScreen) styleLine(l string, current bool, w int) string {
 	return style.Render(l)
 }
 
-func (s *logsScreen) Hint() string {
-	if s.searching {
-		return keyHint("Enter", "find", "Esc", "cancel")
+func (s *logsScreen) Hint() string { return "" }
+
+func (s *logsScreen) Footer() []KeyHelp {
+	switch {
+	case s.searching:
+		return []KeyHelp{{"enter", "find"}, {"esc", "cancel"}}
+	case s.running && s.fg:
+		return []KeyHelp{{"esc", "cancel"}}
+	case s.output && s.running:
+		return []KeyHelp{{"esc", "back"}}
+	case s.output:
+		return []KeyHelp{{"enter/esc", "back"}, {"r", "run again"}, {"y", "copy"}}
 	}
-	if s.running && s.fg {
-		return theme.AccentFg.Render(s.env.Spin()) + " " + s.title + theme.Dim.Render(" — Esc cancel")
-	}
-	return keyHint("/", "search", "n/N", "next", "e", "next error", "L", "level", "w", "wrap", "y", "copy")
+	return []KeyHelp{{"/", "search"}, {"e", "next error"}, {"L", "level"}, {"w", "wrap"}, {"y", "copy"}}
 }
 
 func (s *logsScreen) Keys() []KeyHelp {
+	if s.output {
+		return []KeyHelp{{"↑↓ PgUp PgDn", "scroll"}, {"/", "search"}, {"y", "copy the output"}, {"r", "run again"}, {"Enter / Esc", "back (Esc cancels while running)"}}
+	}
 	return []KeyHelp{
 		{"↑↓ PgUp PgDn", "scroll"}, {"End / f", "follow"}, {"/", "search"}, {"n / N", "next / previous match"},
 		{"e / E", "next / previous error"}, {"L", "level: all → warnings → errors"}, {"w", "wrap long lines"},

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Muster-dev/muster-tui/internal/engine"
 	"github.com/Muster-dev/muster-tui/internal/theme"
@@ -108,66 +109,100 @@ func (s *doctorScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 	return s, nil, true
 }
 
-func (s *doctorScreen) View(w, h int) string {
-	right := ""
+// Status: the counts, or what's running.
+func (s *doctorScreen) Status() string {
 	if s.running {
-		right = theme.AccentFg.Render(s.env.Spin()) + theme.Dim.Render(" checking")
-		if s.fix {
-			right = theme.AccentFg.Render(s.env.Spin()) + theme.Dim.Render(" fixing")
-		}
-	} else if r := s.result; r != nil {
-		right = theme.OK.Render(fmt.Sprintf("%d pass", r.Pass)) + theme.Dim.Render(" · ") + theme.Warning.Render(fmt.Sprintf("%d warn", r.Warnings)) + theme.Dim.Render(" · ") + theme.Err.Render(fmt.Sprintf("%d fail", r.Failures))
+		return ""
 	}
-	lines := []string{spread(section("Doctor"), right, w), ""}
+	r := s.result
+	if r == nil {
+		return ""
+	}
+	if r.Warnings == 0 && r.Failures == 0 {
+		return theme.OK.Render(theme.GlyphOK + " all fine")
+	}
+	var parts []string
+	if r.Failures > 0 {
+		parts = append(parts, theme.Err.Render(fmt.Sprintf("%d failing", r.Failures)))
+	}
+	if r.Warnings > 0 {
+		parts = append(parts, theme.Warning.Render(fmt.Sprintf("%d to check", r.Warnings)))
+	}
+	return strings.Join(parts, theme.Dim.Render(" · "))
+}
+
+func (s *doctorScreen) View(w, h int) string {
+	lines := []string{""}
+	if s.running {
+		what := "Checking the project…"
+		if s.fix {
+			what = "Fixing what doctor can…"
+		}
+		lines = append(lines, theme.AccentFg.Render(s.env.Spin())+" "+what)
+		if s.result == nil {
+			return block(lines, w, h)
+		}
+		lines = append(lines, "")
+	}
 	if s.err != nil {
-		lines = append(lines, theme.Err.Render(theme.GlyphFail+" ")+trunc(s.err.Error(), w-2))
+		lines = append(lines, theme.Err.Render(theme.GlyphFail)+" Doctor didn't finish")
+		for _, l := range wrap(errText(s.err), w-2) {
+			lines = append(lines, "  "+theme.Dim.Render(l))
+		}
+		lines = append(lines, "", theme.Dim.Render("Press r to try again."), "")
 	}
 	var body []string
 	if r := s.result; r != nil {
-		cat := ""
+		var bad, fine []engine.DoctorCheck
 		for _, c := range r.Checks {
-			if c.Category != cat {
-				cat = c.Category
-				if len(body) > 0 {
-					body = append(body, "")
-				}
-				body = append(body, theme.Title.Render(firstNonEmpty(cat, "Checks")))
+			if c.Status == "pass" {
+				fine = append(fine, c)
+			} else {
+				bad = append(bad, c)
 			}
-			var tag string
-			switch c.Status {
-			case "pass":
-				tag = theme.OK.Render("PASS")
-			case "warn":
-				tag = theme.Warning.Render("WARN")
-			default:
-				tag = theme.Err.Render("FAIL")
-			}
-			line := " " + tag + "  " + c.Name
-			if c.Detail != "" {
-				line += theme.Dim.Render(" — " + c.Detail)
-			}
-			body = append(body, trunc(line, w))
 		}
-	} else if !s.running {
-		body = append(body, theme.Dim.Render("No results yet · r to run"))
+		if len(bad) > 0 {
+			body = append(body, section("Needs attention"))
+			for _, c := range bad {
+				g := theme.Warning.Render(theme.GlyphWarn)
+				if c.Status != "warn" {
+					g = theme.Err.Render(theme.GlyphFail)
+				}
+				body = append(body, trunc(g+" "+c.Name+theme.Dim.Render("  "+c.Category), w))
+				for _, l := range wrap(c.Detail, w-4) {
+					body = append(body, "  "+theme.Dim.Render(l))
+				}
+			}
+			body = append(body, "")
+		}
+		if len(fine) > 0 {
+			body = append(body, section("Fine")+theme.Dim.Render("  "+plural(len(fine), "check")))
+			for _, c := range fine {
+				row := theme.OK.Render(theme.GlyphOK) + " " + c.Name
+				if c.Detail != "" {
+					row += theme.Dim.Render(" · " + c.Detail)
+				}
+				body = append(body, trunc(row, w))
+			}
+		}
+	} else if !s.running && s.err == nil {
+		body = append(body, theme.Dim.Render("No results yet — press r to run doctor."))
 	}
-	avail := h - len(lines) - 2
+	avail := h - len(lines)
 	sc := clamp(s.scroll, 0, max(len(body)-avail, 0))
 	for i := sc; i < len(body) && i < sc+avail; i++ {
 		lines = append(lines, body[i])
 	}
-	for len(lines) < h-2 {
-		lines = append(lines, "")
-	}
-	lines = append(lines, rule(w), keyHint("f", "fix what you can", "r", "run again", "↑↓", "scroll"))
 	return block(lines, w, h)
 }
 
-func (s *doctorScreen) Hint() string {
+func (s *doctorScreen) Hint() string { return "" }
+
+func (s *doctorScreen) Footer() []KeyHelp {
 	if s.running {
-		return theme.AccentFg.Render(s.env.Spin()) + " Running doctor — " + keyHint("Esc", "cancel")
+		return []KeyHelp{{"esc", "cancel"}}
 	}
-	return ""
+	return []KeyHelp{{"f", "fix what you can"}, {"r", "run again"}, {"↑↓", "scroll"}, {"esc", "back"}}
 }
 
 func (s *doctorScreen) Keys() []KeyHelp {

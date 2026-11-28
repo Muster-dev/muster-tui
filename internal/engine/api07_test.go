@@ -358,3 +358,16 @@ func TestParseDeployLineKeepsBasicsOnTypeMismatch(t *testing.T) {
 		t.Fatalf("%+v", ev)
 	}
 }
+
+func TestFleetCapsFromHelp(t *testing.T) {
+	old := "Info:\n  list [--json]                 Show machines\n  test [name|group]             Test connectivity (SSH or cloud)\n"
+	c := CapsFor("v0.7.0").WithFleetHelp(old)
+	if !c.FleetHelpKnown || c.FleetTestJSON || c.FleetLogs || c.FleetRestart || !c.EngineAPI {
+		t.Fatalf("%+v", c)
+	}
+	nw := old + "  test [target] [--json]        Test connectivity\n  logs <server> <service> [--tail N] [--json]  Remote logs\n  restart <server> [service...] --yes [--json]\n"
+	c = c.WithFleetHelp(strings.Replace(nw, "  test [name|group]             Test connectivity (SSH or cloud)\n", "", 1))
+	if !c.FleetTestJSON || !c.FleetLogs || !c.FleetRestart {
+		t.Fatalf("%+v", c)
+	}
+}

@@ -93,12 +93,12 @@ func Complete(input string, ctx Context) Completion {
 		pool, desc = ctx.Services, "service"
 	case ArgMachine:
 		if len(kept) == n {
-			pool, desc = ctx.Machines, "machine"
+			pool, desc = ctx.Machines, "server"
 		}
 	case ArgTarget:
 		if len(kept) == n {
 			pool = append(append([]string{}, ctx.Machines...), ctx.Groups...)
-			desc = "machine or group"
+			desc = "server or group"
 		}
 	case ArgContainer:
 		if len(kept) == n {

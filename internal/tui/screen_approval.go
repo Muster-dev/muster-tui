@@ -95,14 +95,14 @@ func (s *approvalScreen) keys() []string {
 func (s *approvalScreen) confirmApprove() tea.Cmd {
 	n := len(s.changes)
 	body := []string{approvedFilesNote(s.keys(), 6),
-		"muster records the approval for this machine only (~/.muster/trust). Hooks run with your permissions."}
+		"muster records the approval for this computer only (~/.muster/trust). Hooks run with your permissions."}
 	for _, c := range s.changes {
 		if len(c.Dangerous) > 0 {
 			body = append(body, theme.GlyphWarn+" "+c.Label()+" contains a risky command: "+strings.Join(c.Dangerous, "; "))
 		}
 	}
 	return func() tea.Msg {
-		return confirmMsg{title: "Approve " + plural(n, "file") + " on this machine?", body: body, yes: "Approve",
+		return confirmMsg{title: "Approve " + plural(n, "file") + " on this computer?", body: body, yes: "Approve",
 			onYes: func() tea.Msg { return approveConfirmedMsg{} }}
 	}
 }
@@ -269,7 +269,7 @@ func (s *approvalScreen) diffLines(c config.HookChange) []string {
 	var lines []string
 	switch c.Kind {
 	case "new":
-		lines = append(lines, theme.Dim.Render("New — not approved on this machine yet"))
+		lines = append(lines, theme.Dim.Render("New — not approved on this computer yet"))
 		for _, l := range read(c.Path) {
 			lines = append(lines, "+"+l)
 		}
@@ -307,25 +307,27 @@ func styleDiff(l string, w int) string {
 func (s *approvalScreen) View(w, h int) string {
 	var lines []string
 	if len(s.changes) == 0 {
-		lines = append(lines, section("Approve hooks"), "")
+		lines = append(lines, "")
 		switch {
 		case s.loading:
-			lines = append(lines, theme.AccentFg.Render(s.env.Spin())+theme.Dim.Render(" asking muster which hooks need approval…"))
+			lines = append(lines, theme.AccentFg.Render(s.env.Spin())+" Asking muster which hooks need approval…")
 		case s.err != nil && s.phase == 0:
-			lines = append(lines, theme.Err.Render(theme.GlyphFail+" ")+errText(s.err))
+			lines = append(lines, theme.Err.Render(theme.GlyphFail)+" Couldn't read the hook approvals")
+			for _, l := range wrap(errText(s.err), w-2) {
+				lines = append(lines, "  "+theme.Dim.Render(l))
+			}
+			lines = append(lines, "", theme.Dim.Render("Approve in a terminal instead: muster hooks approve"))
 		default:
-			lines = append(lines, theme.OK.Render(theme.GlyphOK)+" Every hook matches what you approved.", "")
+			lines = append(lines, theme.OK.Render(theme.GlyphOK)+" Every hook matches what you approved.")
 			if s.then != "" {
-				lines = append(lines, keyHint("Enter", "continue with "+s.then, "Esc", "back"))
-			} else {
-				lines = append(lines, keyHint("Esc", "back"))
+				lines = append(lines, "", theme.Dim.Render("Press enter to continue with "+s.then+"."))
 			}
 		}
 		return block(lines, w, h)
 	}
-	intro := fmt.Sprintf("%s changed since you approved them on this machine. Read the diff — hooks run with your permissions.", plural(len(s.changes), "file"))
-	lines = append(lines, section("Approve hooks"))
-	lines = append(lines, wrap(intro, w)...)
+	intro := fmt.Sprintf("%s changed since you approved them on this computer. Read the diff — hooks run with your permissions.", plural(len(s.changes), "file"))
+	lines = append(lines, "")
+	lines = append(lines, wrapDim(intro, w)...)
 	lines = append(lines, "")
 	listH := min(len(s.changes), 6)
 	start := clamp(s.sel-listH+1, 0, max(len(s.changes)-listH, 0))
@@ -363,7 +365,7 @@ func (s *approvalScreen) View(w, h int) string {
 		if s.v07 {
 			how = "a approve (asks first)"
 		}
-		footer = append(footer, button("Approve", true)+" "+button("Abort", false)+"   "+theme.Dim.Render(how+" · Esc abort · e edit"))
+		footer = append(footer, button("Approve", true)+" "+button("Abort", false)+"   "+theme.Dim.Render(how))
 	}
 	diffH := h - len(lines) - len(footer) - 1
 	if s.sel < len(s.changes) && diffH > 0 {
@@ -387,14 +389,29 @@ func (s *approvalScreen) View(w, h int) string {
 	return block(lines, w, h)
 }
 
-func (s *approvalScreen) Hint() string {
-	if s.phase == 1 {
-		return theme.AccentFg.Render(s.env.Spin()) + " Approving hooks…"
+func (s *approvalScreen) Hint() string { return "" }
+
+// Status: what approving unlocks, on the right of the header.
+func (s *approvalScreen) Status() string {
+	if s.then != "" && len(s.changes) > 0 {
+		return theme.Warning.Render(theme.GlyphWarn + " approve to continue with " + s.then)
 	}
-	if s.then != "" {
-		return theme.Warning.Render(theme.GlyphWarn+" ") + "Approve to continue with " + code(s.then) + theme.Dim.Render(" · ") + keyHint("a", "approve", "Esc", "abort")
+	if len(s.changes) > 0 {
+		return theme.Dim.Render(plural(len(s.changes), "file") + " to review")
 	}
-	return keyHint("j/k", "file", "PgDn", "scroll diff", "a", "approve", "e", "edit", "Esc", "abort")
+	return ""
+}
+
+func (s *approvalScreen) Footer() []KeyHelp {
+	switch {
+	case s.phase == 1:
+		return []KeyHelp{{"esc", "cancel"}}
+	case len(s.changes) == 0 && s.then != "" && !s.loading:
+		return []KeyHelp{{"enter", "continue"}, {"esc", "back"}}
+	case len(s.changes) == 0:
+		return []KeyHelp{{"esc", "back"}}
+	}
+	return []KeyHelp{{"a", "approve"}, {"e", "edit"}, {"j/k", "file"}, {"pgdown", "scroll diff"}, {"esc", "abort"}}
 }
 
 func (s *approvalScreen) Keys() []KeyHelp {

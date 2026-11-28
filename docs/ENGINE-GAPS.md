@@ -320,18 +320,21 @@ project owner.
 
 The server screen (remote-first home) wants more than `fleet` offers today:
 
-* **Logs and restart on a server.** There's no `muster fleet logs <name>
-  <svc> [--tail N] [--json]` or `muster fleet restart <name> [svc]`, so the
-  server screen shows Logs and Restart disabled. Cloud servers can't be
-  reached any other way (no SSH).
+* **Logs and restart on a server — in progress.** muster-tui implements
+  `muster fleet logs <server> <service> [--tail N] [--json]` (NDJSON, the
+  server's own `muster logs --json` events) and `muster fleet restart
+  <server> [service...] --yes [--json]` (`{"server","results":[{"service",
+  "ok","error"}]}`). Both are detected from `muster fleet --help` (a `logs` /
+  `restart` line), not the version; until the CLI ships them the server
+  screen shows Logs and Restart disabled with "needs a newer muster".
 * **Recent deploys on a server.** `fleet status --json` carries each
   service's `last_deploy` (often null); a `muster fleet history <name>
   --json` (the server's own deploy-events log) would fill a "Recent deploys"
   list.
-* **Agent / muster version.** Neither `fleet list --json` nor `fleet status
-  --json` reports the remote muster or muster-agent version. A `version`
-  (and `agent_version` for cloud) field per machine would let the header show
-  it and warn about old agents.
+* **Agent / muster version.** `fleet status --json` is gaining a per-server
+  `muster_version` (may be ""); the server screen and the status card show
+  it when present. An `agent_version` for cloud servers would let them warn
+  about old agents.
 * **Pairing hint.** `fleet list --json` reported a cloud server as
   `"paired": true` while `fleet deploy --dry-run` listed it as `unpaired`;
   for SSH servers `fleet status --json` says `"error": "unpaired"`. The TUI
@@ -341,7 +344,13 @@ The server screen (remote-first home) wants more than `fleet` offers today:
   assistant" on a server is disabled in a folder without one. A
   `muster ask --machine <name>` that brings that server's context would make
   it work from the servers home.
-* **`fleet test --json`.** Only text output; the TUI opens it as a log.
+* **`fleet test --json` — in progress.** `{"servers":[{"name","transport",
+  "mode","ok","connect","muster","latency_ms","error"}],"passed","failed"}`,
+  exit 1 when any failed. Detected from `muster fleet --help` (the `test`
+  line mentions `--json`). Older CLIs: the TUI runs the text command, strips
+  colour codes and box drawing and reads each row's tag (`cloud ok, muster
+  ok`, `SSH fail`, `unpaired`, …) into the same card; latency is only known
+  with `--json`.
 
 ## 16. Minor
 

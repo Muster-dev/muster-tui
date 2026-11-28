@@ -189,31 +189,28 @@ func exitCodeOf(ex engine.Explanation) int {
 }
 
 func (s *explainScreen) View(w, h int) string {
-	lines := []string{section("Explain")}
+	lines := []string{""}
 	switch {
 	case !s.loaded:
-		lines = append(lines, "", theme.AccentFg.Render(s.env.Spin())+theme.Dim.Render(" reading the log…"))
+		lines = append(lines, theme.AccentFg.Render(s.env.Spin())+" Reading the last failure…")
 		return block(lines, w, h)
 	case s.err != nil:
-		lines = append(lines, "", theme.Err.Render(theme.GlyphFail+" ")+errText(s.err))
+		lines = append(lines, theme.Err.Render(theme.GlyphFail)+" Couldn't explain it")
+		for _, l := range wrap(errText(s.err), w-2) {
+			lines = append(lines, "  "+theme.Dim.Render(l))
+		}
+		lines = append(lines, "", theme.Dim.Render("Press l to read the logs yourself, or esc to go back."))
 		return block(lines, w, h)
 	case s.ex.Reason == "no_logs" || (s.ex.Log == "" && !s.ex.Matched):
 		what := "no failed deploys recorded in this project"
 		if s.svc != "" {
 			what = s.svc + " has no deploy logs"
 		}
-		lines = append(lines, "", "Nothing to explain yet — "+what+".", theme.Dim.Render("When a deploy fails, explain shows why."))
-		return block(append(lines, "", keyHint("Esc", "back")), w, h)
+		lines = append(lines, "Nothing to explain yet — "+what+".", "", theme.Dim.Render("When a deploy fails, explain shows why."))
+		return block(lines, w, h)
 	}
 	ex := s.ex
-	head := ex.Service + " — " + firstNonEmpty(ex.Action, "deploy") + " failed"
-	if ex.Action == "health" {
-		head = ex.Service + " — health check failed"
-	}
-	if c := exitCodeOf(ex); c != 0 {
-		head += fmt.Sprintf(" (exit %d)", c)
-	}
-	lines[0] = spread(section("Explain · "+head), "", w)
+	lines = append(lines, section(s.headline()))
 	if ex.Log != "" {
 		lines = append(lines, theme.Dim.Render("Log: "+relPath(s.env, ex.Log)))
 	}
@@ -254,23 +251,31 @@ func (s *explainScreen) View(w, h int) string {
 			lines = append(lines, theme.OK.Render(theme.GlyphOK+" Fix applied")+theme.Dim.Render(" — deploy again with d"))
 		}
 	}
-	for len(lines) < h-1 {
-		lines = append(lines, "")
-	}
-	lines = append(lines, s.footer())
 	return block(lines, w, h)
 }
 
-func (s *explainScreen) footer() string {
-	var pairs []string
+// headline: "api — deploy failed (exit 1)".
+func (s *explainScreen) headline() string {
+	ex := s.ex
+	head := ex.Service + " — " + firstNonEmpty(ex.Action, "deploy") + " failed"
+	if ex.Action == "health" {
+		head = ex.Service + " — health check failed"
+	}
+	if c := exitCodeOf(ex); c != 0 {
+		head += fmt.Sprintf(" (exit %d)", c)
+	}
+	return head
+}
+
+func (s *explainScreen) Footer() []KeyHelp {
+	var keys []KeyHelp
 	if h := s.ex.Hint; h != nil && h.Fix != nil {
-		pairs = append(pairs, "f", "fix")
+		keys = append(keys, KeyHelp{"f", "fix"})
 	}
 	if ok, _ := s.env.assistantReady(); ok {
-		pairs = append(pairs, "a", "explain with AI")
+		keys = append(keys, KeyHelp{"a", "explain with AI"})
 	}
-	pairs = append(pairs, "l", "logs", "d", "deploy", "Esc", "back")
-	return keyHint(pairs...)
+	return append(keys, KeyHelp{"l", "logs"}, KeyHelp{"d", "deploy"}, KeyHelp{"esc", "back"})
 }
 
 func (s *explainScreen) Hint() string { return "" }

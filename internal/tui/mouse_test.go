@@ -57,7 +57,7 @@ func TestServerDetailHasNoShellForCloud(t *testing.T) {
 		t.Fatalf("active %s", m.active)
 	}
 	v := plain(m.View())
-	if contains(v, "Open shell") || !contains(v, "Fleet Cloud") || !contains(v, "no fleet logs command") {
+	if contains(v, "Open shell") || !contains(v, "Fleet Cloud") || !contains(v, "needs a newer muster") {
 		t.Fatalf("\n%s", v)
 	}
 	m = feed(m, runLineMsg{"ssh cloud-1"})

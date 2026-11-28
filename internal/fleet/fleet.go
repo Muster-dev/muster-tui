@@ -231,13 +231,16 @@ func appendNew(xs []string, add ...string) []string {
 
 // MachineStatus is one machine in `muster fleet status --json`.
 type MachineStatus struct {
-	Machine   string          `json:"machine"`
-	Host      string          `json:"host"`
-	Reachable bool            `json:"reachable"`
-	Healthy   *int            `json:"healthy"` // nil when unknown
-	Total     *int            `json:"total"`
-	Error     string          `json:"error"`
-	Services  []ServiceHealth `json:"-"`
+	Machine   string `json:"machine"`
+	Host      string `json:"host"`
+	Reachable bool   `json:"reachable"`
+	Healthy   *int   `json:"healthy"` // nil when unknown
+	Total     *int   `json:"total"`
+	Error     string `json:"error"`
+	// MusterVersion is the server's muster version (newer CLIs; "" when
+	// unknown or the server doesn't run muster).
+	MusterVersion string          `json:"muster_version"`
+	Services      []ServiceHealth `json:"-"`
 }
 
 // ServiceHealth is one service on a fleet machine.

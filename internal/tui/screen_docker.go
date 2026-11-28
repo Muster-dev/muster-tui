@@ -355,22 +355,22 @@ func (s *dockerScreen) View(w, h int) string {
 			tabs = append(tabs, theme.Dim.Render(" "+label+" "))
 		}
 	}
-	right := ""
-	if s.loading > 0 {
-		right = theme.AccentFg.Render(s.env.Spin())
+	lines := []string{strings.Join(tabs, " "), ""}
+	if s.loaded && s.err != nil {
+		lines = []string{""} // no tabs to switch while Docker is down
 	}
-	lines := []string{spread(strings.Join(tabs, ""), right, w), ""}
 	switch {
 	case !s.loaded:
-		lines = append(lines, theme.AccentFg.Render(s.env.Spin())+theme.Dim.Render(" Asking Docker…"))
+		lines = append(lines, theme.AccentFg.Render(s.env.Spin())+" Asking Docker…")
 		return block(lines, w, h)
 	case errors.Is(s.err, docker.ErrNotInstalled):
-		lines = append(lines, theme.Warning.Render(theme.GlyphWarn)+" Docker isn't installed on this machine.", "", theme.Dim.Render("Install Docker Desktop, OrbStack or colima, then come back."))
+		lines = append(lines, theme.Warning.Render(theme.GlyphWarn)+" Docker isn't installed on this computer.", "", theme.Dim.Render("Install Docker Desktop, OrbStack or colima, then come back."))
 		return block(lines, w, h)
 	case s.err != nil:
 		lines = append(lines, theme.Warning.Render(theme.GlyphWarn)+" Docker isn't running.", "")
 		lines = append(lines, wrap("Start Docker Desktop (or `colima start` / OrbStack), then press R to try again.", w)...)
-		lines = append(lines, "", theme.Dim.Render(trunc(s.err.Error(), w)))
+		lines = append(lines, "")
+		lines = append(lines, wrapDim(s.err.Error(), w)...)
 		return block(lines, w, h)
 	}
 	var rows []string
@@ -388,7 +388,7 @@ func (s *dockerScreen) View(w, h int) string {
 	if header != "" {
 		lines = append(lines, theme.Dim.Render(" "+header))
 	}
-	avail := h - len(lines) - 2
+	avail := h - len(lines)
 	sel := s.sel[s.tab]
 	start := clamp(sel-avail+1, 0, max(len(rows)-avail, 0))
 	for i := start; i < len(rows) && i < start+avail; i++ {
@@ -399,42 +399,34 @@ func (s *dockerScreen) View(w, h int) string {
 		lines = append(lines, r)
 	}
 	if len(rows) == 0 {
-		lines = append(lines, theme.Dim.Render(" nothing here"))
+		lines = append(lines, theme.Dim.Render(" "+[]string{"No containers.", "No images.", "No volumes.", "Docker reported no disk usage."}[s.tab]))
 	}
-	for len(lines) < h-2 {
-		lines = append(lines, "")
-	}
-	lines = append(lines, rule(w), s.actionsLine())
 	return block(lines, w, h)
 }
 
-func (s *dockerScreen) actionsLine() string {
-	switch s.tab {
-	case 0:
-		return keyHint("l", "logs", "r", "restart", "s", "stop", "x", "shell", "d", "rm", "P", "prune")
-	case 1:
-		return keyHint("p", "pull", "d", "remove", "P", "prune dangling")
-	case 2:
-		return keyHint("d", "delete")
+// Status: a spinner while Docker is being asked.
+func (s *dockerScreen) Status() string {
+	if s.loading > 0 && s.loaded {
+		return theme.AccentFg.Render(s.env.Spin()) + theme.Dim.Render(" refreshing")
 	}
-	return keyHint("i", "prune images", "c", "prune containers", "R", "refresh")
+	return ""
 }
 
 func (s *dockerScreen) containerRows(w int) (string, []string) {
 	nameW := clamp(w/4, 12, 26)
-	statusW := 18
+	statusW := clamp(w/4, 14, 24)
 	showImage := w >= 100
 	showPorts := w >= 72
 	showStats := w >= 58
-	hdr := "  " + fit("NAME", nameW) + " " + fit("STATUS", statusW)
+	hdr := "  " + fit("Name", nameW) + " " + fit("Status", statusW)
 	if showPorts {
-		hdr += " " + fit("PORTS", 14)
+		hdr += " " + fit("Ports", 14)
 	}
 	if showStats {
-		hdr += " " + fit("CPU", 7) + fit("MEM", 10)
+		hdr += " " + fit("CPU", 7) + fit("Memory", 10)
 	}
 	if showImage {
-		hdr += " IMAGE"
+		hdr += " Image"
 	}
 	var rows []string
 	for _, c := range s.containers {
@@ -474,7 +466,7 @@ func (s *dockerScreen) containerRows(w int) (string, []string) {
 
 func (s *dockerScreen) imageRows(w int) (string, []string) {
 	refW := clamp(w-34, 16, 48)
-	hdr := " " + fit("IMAGE", refW) + " " + fit("SIZE", 9) + " CREATED"
+	hdr := " " + fit("Image", refW) + " " + fit("Size", 9) + " Created"
 	var rows []string
 	for _, img := range s.images {
 		ref := img.Ref()
@@ -489,7 +481,7 @@ func (s *dockerScreen) imageRows(w int) (string, []string) {
 }
 
 func (s *dockerScreen) volumeRows(w int) (string, []string) {
-	hdr := " " + fit("VOLUME", clamp(w-12, 16, 60)) + " DRIVER"
+	hdr := " " + fit("Volume", clamp(w-12, 16, 60)) + " Driver"
 	var rows []string
 	for _, v := range s.volumes {
 		rows = append(rows, " "+fit(v.Name, clamp(w-12, 16, 60))+" "+theme.Dim.Render(v.Driver))
@@ -498,7 +490,7 @@ func (s *dockerScreen) volumeRows(w int) (string, []string) {
 }
 
 func (s *dockerScreen) diskRows(w int) (string, []string) {
-	hdr := " " + fit("TYPE", 15) + fit("TOTAL", 7) + fit("ACTIVE", 8) + fit("SIZE", 10) + "RECLAIMABLE"
+	hdr := " " + fit("Type", 15) + fit("Total", 7) + fit("Active", 8) + fit("Size", 10) + "Reclaimable"
 	var rows []string
 	for _, d := range s.df {
 		rows = append(rows, " "+fit(d.Type, 15)+fit(d.Count(), 7)+fit(fmt.Sprint(d.Active), 8)+fit(d.Size, 10)+theme.Warning.Render(d.Reclaimable))
@@ -506,11 +498,24 @@ func (s *dockerScreen) diskRows(w int) (string, []string) {
 	return hdr, rows
 }
 
-func (s *dockerScreen) Hint() string {
-	if s.err != nil && !errors.Is(s.err, docker.ErrNotInstalled) {
-		return theme.Warning.Render(theme.GlyphWarn+" ") + "Docker isn't running" + theme.Dim.Render(" · ") + keyHint("R", "retry")
+func (s *dockerScreen) Hint() string { return "" }
+
+func (s *dockerScreen) Footer() []KeyHelp {
+	switch {
+	case errors.Is(s.err, docker.ErrNotInstalled):
+		return []KeyHelp{{"esc", "back"}}
+	case s.err != nil:
+		return []KeyHelp{{"R", "try again"}, {"esc", "back"}}
 	}
-	return keyHint("←→ 1-4", "tabs", "↑↓", "select", "R", "refresh")
+	switch s.tab {
+	case 0:
+		return []KeyHelp{{"l", "logs"}, {"r", "restart"}, {"s", "stop/start"}, {"x", "shell"}, {"←→", "tabs"}}
+	case 1:
+		return []KeyHelp{{"p", "pull"}, {"d", "remove"}, {"P", "prune dangling"}, {"←→", "tabs"}}
+	case 2:
+		return []KeyHelp{{"d", "delete"}, {"←→", "tabs"}}
+	}
+	return []KeyHelp{{"i", "prune images"}, {"c", "prune containers"}, {"R", "refresh"}, {"←→", "tabs"}}
 }
 
 func (s *dockerScreen) Keys() []KeyHelp {

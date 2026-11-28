@@ -397,11 +397,16 @@ func (s *serversScreen) View(w, h int) string {
 		}
 		return block(lines, w, h)
 	}
-	lines := []string{spread(section("Servers"), s.statusLine(), w), ""}
+	// Home has no breadcrumb, so it names the list; the Servers screen's
+	// header already does.
+	lines := []string{""}
+	if s.key == "dashboard" {
+		lines = []string{spread(section("Servers"), s.statusLine(), w), ""}
+	}
 	items := s.items()
 	if len(items) == 0 {
 		if !st.FleetLoaded {
-			lines = append(lines, theme.AccentFg.Render(s.env.Spin())+theme.Dim.Render(" loading servers…"))
+			lines = append(lines, theme.AccentFg.Render(s.env.Spin())+" Loading servers…")
 			return block(lines, w, h)
 		}
 		lines = append(lines, "No servers yet.", "")
@@ -434,6 +439,14 @@ func hasCloudServer(inv fleet.Inventory) bool {
 }
 
 func (s *serversScreen) Hint() string { return "" }
+
+// Status is shown on the right of the header (Servers screen only).
+func (s *serversScreen) Status() string {
+	if s.key == "dashboard" || s.adding != nil {
+		return ""
+	}
+	return s.statusLine()
+}
 
 func (s *serversScreen) Footer() []KeyHelp {
 	if s.adding != nil {

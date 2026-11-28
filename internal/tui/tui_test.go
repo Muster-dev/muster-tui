@@ -279,7 +279,7 @@ func TestLogsSearchFilterAndJump(t *testing.T) {
 	if s.cursor != 3 {
 		t.Fatalf("jump to error %d", s.cursor)
 	}
-	if v := s.View(60, 10); !strings.Contains(v, "/timeout") {
+	if v := s.Status(); !strings.Contains(v, "/timeout") {
 		t.Fatalf("filter tag missing:\n%s", v)
 	}
 }

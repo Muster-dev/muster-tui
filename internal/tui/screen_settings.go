@@ -399,25 +399,18 @@ func (s *settingsScreen) View(w, h int) string {
 		listW = 18
 	}
 	var right []string
-	title := sectionLabel(s.current())
-	status := ""
-	switch {
-	case s.dirtyG || s.dirtyP:
-		status = theme.Warning.Render("unsaved · Ctrl+S")
-	case s.current() == "global":
-		status = theme.Dim.Render("~/.muster/settings.json")
-	case s.proj != nil:
-		status = theme.Dim.Render(shortPath(s.proj.Path))
-	}
-	fw := w - listW - 2
+	fw := w - listW - 3
 	if listW == 0 {
+		// No section list: name the section, [ ] switches.
 		fw = w
-		title = "‹ " + title + " ›"
+		right = append(right, section("‹ "+sectionLabel(s.current())+" ›"), "")
+	} else {
+		right = append(right, "", "")
 	}
-	right = append(right, spread(section(title), status, fw), "")
 	switch {
 	case s.current() == "order":
-		right = append(right, theme.Dim.Render("Services deploy top to bottom. J/K move, Space toggles skip."), "")
+		right = append(right, wrapDim("Services deploy top to bottom. J/K moves one, Space skips it.", fw)...)
+		right = append(right, "")
 		for i, k := range s.proj.ServiceKeys() {
 			cur := "  "
 			if i == s.orderSel {
@@ -433,7 +426,13 @@ func (s *settingsScreen) View(w, h int) string {
 		if s.current() == "global" && s.globalErr != nil {
 			right = append(right, theme.Err.Render(theme.GlyphFail+" settings.json: "+s.globalErr.Error()), "")
 		}
-		right = append(right, s.form.Lines(fw, 20, true)...)
+		labelW := 14
+		for _, f := range s.form.fields {
+			if f.kind != fHeading {
+				labelW = max(labelW, width(f.label))
+			}
+		}
+		right = append(right, s.form.Lines(fw, min(labelW, fw/2), true)...)
 	}
 	if n := len(s.errs); n > 0 && s.current() != "global" {
 		right = append(right, "", theme.Err.Render(fmt.Sprintf("%s %s", theme.GlyphFail, plural(n, "problem"))))
@@ -442,7 +441,7 @@ func (s *settingsScreen) View(w, h int) string {
 		}
 	}
 	// scroll the form so the cursor stays visible
-	bodyH := h - 2
+	bodyH := h
 	if s.form != nil && len(right) > bodyH {
 		selLine := 2
 		count := 0
@@ -466,23 +465,22 @@ func (s *settingsScreen) View(w, h int) string {
 		right = append(right, "")
 	}
 	right = right[:bodyH]
-	right = append(right, rule(fw), keyHint("↑↓", "field", "Enter/←→", "change", "[ ]", "section", "Ctrl+S", "save", "e", "$EDITOR"))
 	if listW == 0 {
 		return block(right, w, h)
 	}
-	var left []string
+	left := []string{""}
 	for i, sec := range s.sections {
 		label := sectionLabel(sec)
 		if strings.HasPrefix(sec, "svc:") {
 			label = "  " + label
 		}
 		if i == s.sec {
-			left = append(left, theme.AccentFg.Render(theme.GlyphCursor)+theme.Title.Render(fit(label, listW-1)))
+			left = append(left, theme.AccentFg.Render(theme.GlyphCursor)+" "+theme.Title.Render(fit(label, listW-2)))
 		} else {
-			left = append(left, " "+theme.Dim.Render(fit(label, listW-1)))
+			left = append(left, "  "+theme.Dim.Render(fit(label, listW-2)))
 		}
 		if sec == "order" {
-			left = append(left, theme.Dim.Render(" Services"))
+			left = append(left, "", theme.Dim.Render("  Services"))
 		}
 	}
 	out := make([]string, h)
@@ -494,16 +492,34 @@ func (s *settingsScreen) View(w, h int) string {
 		if i < len(right) {
 			r = right[i]
 		}
-		out[i] = fit(l, listW) + "  " + fit(r, fw)
+		out[i] = fit(l, listW) + theme.Rule.Render("│") + "  " + fit(r, fw)
 	}
 	return strings.Join(out, "\n")
 }
 
-func (s *settingsScreen) Hint() string {
-	if s.form != nil && s.form.editing {
-		return keyHint("Enter", "set", "Esc", "cancel")
+func (s *settingsScreen) Hint() string { return "" }
+
+// Status: unsaved changes, or which file this section lives in.
+func (s *settingsScreen) Status() string {
+	switch {
+	case s.dirtyG || s.dirtyP:
+		return theme.Warning.Render("unsaved — ctrl+s saves")
+	case s.current() == "global":
+		return theme.Dim.Render("~/.muster/settings.json")
+	case s.proj != nil:
+		return theme.Dim.Render(shortPath(s.proj.Path))
 	}
 	return ""
+}
+
+func (s *settingsScreen) Footer() []KeyHelp {
+	if s.form != nil && s.form.editing {
+		return []KeyHelp{{"enter", "set"}, {"esc", "cancel"}}
+	}
+	if s.current() == "order" {
+		return []KeyHelp{{"J/K", "move"}, {"space", "skip"}, {"[ ]", "section"}, {"ctrl+s", "save"}, {"esc", "back"}}
+	}
+	return []KeyHelp{{"↑↓", "field"}, {"enter", "change"}, {"[ ]", "section"}, {"ctrl+s", "save"}, {"e", "editor"}}
 }
 
 func (s *settingsScreen) Keys() []KeyHelp {

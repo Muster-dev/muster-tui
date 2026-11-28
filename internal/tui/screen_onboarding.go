@@ -64,7 +64,7 @@ func newOnboarding(env *Env, dir string) *onboarding {
 }
 
 func (o *onboarding) Key() string     { return "onboarding" }
-func (o *onboarding) Title() string   { return "Set up" }
+func (o *onboarding) Title() string   { return "Set up " + shortPath(o.dir) }
 func (o *onboarding) Init() tea.Cmd   { return nil }
 func (o *onboarding) Capturing() bool { return o.edit }
 func (o *onboarding) Close()          { o.env.Tasks.Cancel(o.taskID) }
@@ -359,47 +359,58 @@ func (o *onboarding) View(w, h int) string {
 	var lines []string
 	add := func(s ...string) { lines = append(lines, s...) }
 	name := shortPath(o.dir)
+	add("")
 	switch o.phase {
 	case obIntro:
-		add(section("Set up "+name), "")
 		add(wrap("There's no muster.json here yet. muster will look at this folder — compose files, Dockerfiles, Kubernetes manifests — and propose services, health checks and a deploy order. Nothing is written until you say so.", w)...)
-		add("", keyHint("Enter", "scan this folder", "Esc", "not now"))
 	case obScanning:
-		add(section("Set up "+name), "", theme.AccentFg.Render(o.env.Spin())+" Scanning "+name+"…")
+		add(theme.AccentFg.Render(o.env.Spin()) + " Scanning " + name + "…")
 	case obFailed:
-		add(section("Set up "+name), "", theme.Err.Render(theme.GlyphFail+" ")+trunc(errText(o.err), w-2))
-		for _, l := range tail(o.out, h-8) {
-			add(theme.Dim.Render("  " + trunc(l, w-2)))
+		add(theme.Err.Render(theme.GlyphFail) + " Setup didn't finish")
+		for _, l := range wrap(errText(o.err), w-2) {
+			add("  " + theme.Dim.Render(l))
 		}
-		add("", keyHint("Enter", "scan again", "Esc", "back"))
+		if out := cleanOutput(nil, o.out); len(out) > 0 {
+			add("")
+			for _, l := range tail(out, h-9) {
+				add(theme.Dim.Render("  " + trunc(strings.TrimSpace(l), w-2)))
+			}
+		}
+		add("", theme.Dim.Render("Press enter to scan again."))
 	case obReview, obCustomize:
-		add(o.reviewLines(w)...)
+		lines = append(lines, o.reviewLines(w)...)
 	case obCreating:
-		add(section("Set up "+name), "", theme.AccentFg.Render(o.env.Spin())+" Creating muster.json and hooks…", "")
-		for _, l := range tail(o.out, h-5) {
-			add(theme.Dim.Render("  " + trunc(l, w-2)))
+		add(theme.AccentFg.Render(o.env.Spin())+" Creating muster.json and hooks…", "")
+		for _, l := range tail(cleanOutput(nil, o.out), h-5) {
+			add(theme.Dim.Render("  " + trunc(strings.TrimSpace(l), w-2)))
 		}
 	case obCreated:
 		n := 0
 		if o.env.State.Project != nil {
 			n = len(o.env.State.Project.ServiceKeys())
 		}
-		add(section("Set up "+name), "", theme.OK.Render(theme.GlyphOK+" Created muster.json")+theme.Dim.Render(fmt.Sprintf(" with %s and hooks in .muster/hooks/", plural(n, "service"))), "")
-		add("Deploy now? A dry run shows exactly what will happen first.", "")
-		add(keyHint("Enter", "dry run", "d", "deploy for real", "Esc", "later"))
+		add(theme.OK.Render(theme.GlyphOK+" Created muster.json")+theme.Dim.Render(fmt.Sprintf(" with %s and hooks in .muster/hooks/", plural(n, "service"))), "")
+		add("Deploy now? A dry run shows exactly what will happen first.")
 	}
 	return block(lines, w, h)
+}
+
+// Status: what the scan found, on the right of the header.
+func (o *onboarding) Status() string {
+	if (o.phase != obReview && o.phase != obCustomize) || o.plan.Name == "" {
+		return ""
+	}
+	found := strings.Join(o.plan.Found, ", ")
+	if o.plan.Stack == "" {
+		return theme.Dim.Render(found)
+	}
+	return theme.Dim.Render(strings.TrimSuffix(o.plan.Stack+" · "+found, " · "))
 }
 
 func (o *onboarding) reviewLines(w int) []string {
 	p := o.plan
 	var lines []string
 	found := strings.Join(p.Found, ", ")
-	right := theme.Dim.Render(strings.TrimSpace(p.Stack + " · " + found))
-	if p.Stack == "" {
-		right = theme.Dim.Render(found)
-	}
-	lines = append(lines, spread(section("Set up "+p.Name), right, w), "")
 	if p.Fallback {
 		msg := "Nothing muster-tui recognises directly (no compose file, Dockerfile or k8s manifests)."
 		if len(p.Found) > 0 {
@@ -418,9 +429,9 @@ func (o *onboarding) reviewLines(w int) []string {
 	}
 	nameW = min(nameW, 16)
 	showCreds := w >= 64
-	hdr := "    " + fit("#", 3) + fit("SERVICE", nameW+2) + fit("KIND", 7) + fit("HEALTH CHECK", 22)
+	hdr := "    " + fit("#", 3) + fit("Service", nameW+2) + fit("Kind", 7) + fit("Health check", 22)
 	if showCreds {
-		hdr += "CREDENTIALS"
+		hdr += "Credentials"
 	}
 	lines = append(lines, theme.Dim.Render(hdr))
 	n := 0
@@ -476,7 +487,7 @@ func (o *onboarding) reviewLines(w int) []string {
 	lines = append(lines, "")
 	if o.phase == obCustomize {
 		col := []string{"include", "health check type", "port", "endpoint / command", "credentials"}[o.col]
-		lines = append(lines, theme.Dim.Render("Editing ")+theme.AccentFg.Render(col)+theme.Dim.Render(" · ")+keyHint("←→", "field", "Space", "change", "J/K", "move", "Esc", "done"))
+		lines = append(lines, theme.Dim.Render("Editing ")+theme.AccentFg.Render(col))
 	} else {
 		lines = append(lines, o.buttons())
 	}
@@ -491,14 +502,24 @@ func (o *onboarding) buttons() string {
 	return strings.Join(b, " ")
 }
 
-func (o *onboarding) Hint() string {
+func (o *onboarding) Hint() string { return "" }
+
+func (o *onboarding) Footer() []KeyHelp {
 	switch o.phase {
-	case obReview:
-		return keyHint("Enter", "choose", "c", "create", "e", "customize", "Esc", "cancel")
+	case obIntro:
+		return []KeyHelp{{"enter", "scan this folder"}, {"esc", "not now"}}
 	case obScanning, obCreating:
-		return theme.AccentFg.Render(o.env.Spin()) + " Working — " + keyHint("Esc", "cancel")
+		return []KeyHelp{{"esc", "cancel"}}
+	case obFailed:
+		return []KeyHelp{{"enter", "scan again"}, {"esc", "back"}}
+	case obReview:
+		return []KeyHelp{{"enter", "choose"}, {"c", "create"}, {"e", "customize"}, {"esc", "cancel"}}
+	case obCustomize:
+		return []KeyHelp{{"←→", "field"}, {"space", "change"}, {"J/K", "move"}, {"esc", "done"}}
+	case obCreated:
+		return []KeyHelp{{"enter", "dry run"}, {"d", "deploy for real"}, {"esc", "later"}}
 	}
-	return ""
+	return nil
 }
 
 func (o *onboarding) Keys() []KeyHelp {
