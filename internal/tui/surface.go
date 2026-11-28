@@ -160,6 +160,14 @@ func (c card) view(w, h int) string {
 	if c.actions != "" {
 		lines = append(lines, "", c.actions)
 	}
+	// Hug the content: a card no wider than its widest line (but not tiny).
+	used := 0
+	for _, l := range lines {
+		used = max(used, width(strings.TrimRight(ansi.Strip(l), " ")))
+	}
+	if fitW := used + 2*cardPadX(cw); fitW < cw {
+		cw = max(fitW, min(cw, 60))
+	}
 	box := panel(lines, cw, cardPadX(cw), padY)
 	top := 1
 	if free := h - len(box); free > 6 {
