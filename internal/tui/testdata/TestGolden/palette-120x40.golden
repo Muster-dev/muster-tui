@@ -1,0 +1,40 @@
+ muster                                                                                         2 healthy · 1 unhealthy
+    Services                                                                                        checked just now
+
+        Service  Health        Last deploy           Version
+    ▸ ● redis    healthy       deployed 21h ago      —
+      ● api      healthy       deployed 20m ago      4f2a9c1
+      ✕ web      unhealthy     failed 47m ago        4f2a9c1
+      ○ worker   check off     never deployed        —
+
+    Recent activity
+     13:40   api      Commands                                                                 esc
+     13:12   web
+     11:02   web       › ▏Search actions, servers and services…
+     Nov 25  redis
+                      Actions
+                      ▸ Deploy                          Deploy every service in this pro…
+                        Dry run                         Show the deploy plan without cha…
+                        Logs                            Follow a service's logs
+                        Status                          Check every service's health now
+                        Rollback                        Put a service back on its previo…
+                        Restart                         Restart a service
+                        Explain last failure            Why the last deploy failed, and …
+                        Doctor                          Diagnose this project
+                        History                         Deploys and rollbacks over time
+                        Settings                        Project and global settings
+                        Servers                         Every server and how it's doing
+                        Add server                      Connect a new server over SSH or…
+                        Ask assistant                   Ask the Muster Assistant (Fleet …
+                        Docker                          Containers, images and disk on t…
+                        Help                            Keys, mouse and commands                 ?
+
+                      ↑↓ move · enter run · tab complete · esc close
+
+
+
+
+
+
+    ✕ web is unhealthy · logs web · rollback web
+ acme-store  ⎇ main                                                                             ? help  ctrl+k commands

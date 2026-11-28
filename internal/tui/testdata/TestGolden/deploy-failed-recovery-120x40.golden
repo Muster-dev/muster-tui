@@ -1,0 +1,40 @@
+ muster  ›  Deploy                                                                                 ✕ redis failed · 0ms
+
+  ✕ redis                                                                                                           0ms
+    ✕ run deploy.sh                                                                                                 0ms
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ✕ redis failed (exit 125)
+   Docker isn't running. Start Docker Desktop (or `colima start`), then Retry.
+   │ Pulling redis image...
+   │ failed to connect to the docker API at unix:///var/run/docker.sock
+   Full log: /p/.muster/logs/redis-deploy.log · Ctrl+O
+
+ [Retry]  Rollback   Skip   Abort
+ acme-store  ⎇ main                                  r retry · b rollback · s skip · a abort    ? help  ctrl+k commands

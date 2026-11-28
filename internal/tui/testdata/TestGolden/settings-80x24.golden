@@ -1,4 +1,4 @@
- muster  acme-store  ⎇ main  ›  Settings                ~/.muster/settings.json
+ muster  ›  Settings               ~/.muster/settings.json   acme-store  ⎇ main
                    │
  ▸ Global          │
    Deploy order    │  ▸ Colour                  ‹ auto ›
@@ -21,4 +21,4 @@
                    │
                    │
                    │
- ↑↓ field · enter change · [ ] section · ctrl+s save · e editor ctrl+k commands
+                 ↑↓ field · enter change · [ ] section · ctrl+s save · e editor

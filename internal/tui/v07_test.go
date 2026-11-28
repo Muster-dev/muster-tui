@@ -197,7 +197,7 @@ func TestRestartRollbackAndLogsUseJSON(t *testing.T) {
 
 func TestServersShowNewFleetShape(t *testing.T) {
 	d := deps07(t, "approved")
-	f := startFlow(t, d, 120, 30)
+	f := startFlow(t, d, 100, 30) // single column: every row shows its connection
 	f.send(refreshMsg{"fleet"}, runLineMsg{"servers"}).wait("edge-1", "prod-1", "SSH · deploy@10.0.0.5:2222", "Fleet Cloud", "Needs pairing")
 	f.key("r").wait("2/3 healthy", "Offline")
 	_, view := f.end()

@@ -1,4 +1,4 @@
- muster  acme-store  ⎇ main              2 healthy · 1 unhealthy
+ muster                            2 healthy · 1 unhealthy   acme-store  ⎇ main
  Services                                                      checked just now
 
      Service  Health        Last deploy           Version
@@ -21,4 +21,4 @@
 
 
  ✕ web is unhealthy · logs web · rollback web
- enter open · d deploy · L logs · r refresh                     ctrl+k commands
+                  enter open · d deploy · L logs · r refresh    ctrl+k commands

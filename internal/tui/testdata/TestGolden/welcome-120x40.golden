@@ -1,0 +1,40 @@
+ muster
+
+
+
+
+
+
+
+
+
+
+
+                                                      m u s t e r
+
+                                      Deploy anything, anywhere — from one place.
+
+
+                          s       Set up this folder      scan it and create muster.json
+                          a       Add a server            deploy to it over SSH or Fleet Cloud
+                          c       Sign in to Fleet Cloud  reach servers through the relay
+                          D       Docker                  containers, images and disk here
+                          ctrl+k  Commands                everything else, by name
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ⎇ main                                       s set up this folder · a add server · D docker    ? help  ctrl+k commands

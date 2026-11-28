@@ -12,7 +12,9 @@ import (
 	"github.com/charmbracelet/x/exp/teatest"
 )
 
-var sizes = []struct{ w, h int }{{80, 24}, {140, 40}}
+// Every scenario is checked narrow, medium and wide: wide terminals centre
+// a reading column and split list screens into master-detail.
+var sizes = []struct{ w, h int }{{80, 24}, {120, 40}, {200, 55}}
 
 type scenario struct {
 	name  string
@@ -92,6 +94,24 @@ func scenarios() []scenario {
 			until: []string{"Restart", "newer muster"},
 		},
 		{
+			name:  "home-servers",
+			deps:  func(t *testing.T) Deps { return fleetDeps(t, true) },
+			send:  []tea.Msg{fleetHelp(true), fleetFixture, byrickyHealth},
+			until: []string{"byricky", "2/2 healthy"},
+		},
+		{
+			name:  "welcome",
+			deps:  serverDeps,
+			send:  []tea.Msg{fleetMsg{}},
+			until: []string{"m u s t e r", "Set up this folder"},
+		},
+		{
+			name:  "palette",
+			deps:  baseDeps,
+			send:  append(append([]tea.Msg{}, anyMsgs(fixtures())...), tea.KeyMsg{Type: tea.KeyCtrlK}),
+			until: []string{"Commands", "Search"},
+		},
+		{
 			name:  "settings",
 			deps:  baseDeps,
 			send:  []tea.Msg{runLineMsg{"settings"}},
@@ -142,6 +162,14 @@ func TestGolden(t *testing.T) {
 			})
 		}
 	}
+}
+
+func anyMsgs(xs []any) []tea.Msg {
+	out := make([]tea.Msg, len(xs))
+	for i, x := range xs {
+		out[i] = x
+	}
+	return out
 }
 
 // snapshotMsg is a no-op used to flush the event loop before snapshotting.

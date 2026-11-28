@@ -50,7 +50,7 @@ func TestFleetTestUsesJSONWhenSupported(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "argv")
 	f := startFlow(t, fleetDeps(t, true, "FAKE_LOG="+log), 80, 24)
 	f.send(fleetHelp(true), fleetFixture, runLineMsg{"fleet test"}).
-		wait("Connected · muster OK · 120 ms", "Operation timed", "1 of 2 failed", "enter/esc back", "r run again", "y copy")
+		wait("Connected · muster OK · 120 ms", "Operation", "1 of 2 failed", "enter/esc back", "r run again", "y copy")
 	m, v := f.end()
 	argv, _ := os.ReadFile(log)
 	if !strings.Contains(string(argv), "fleet test --json") {
@@ -68,7 +68,7 @@ func TestFleetTestFallsBackToText(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "argv")
 	f := startFlow(t, fleetDeps(t, false, "FAKE_LOG="+log), 80, 24)
 	f.send(fleetHelp(false), fleetFixture, runLineMsg{"fleet test"}).
-		wait("byricky", "Connected · muster OK", "isn't paired", "SSH couldn't connect", "2 of 4 failed")
+		wait("byricky", "Connected · muster OK", "isn't", "SSH couldn't connect", "2 of 4 failed")
 	_, v := f.end()
 	argv, _ := os.ReadFile(log)
 	if strings.Contains(string(argv), "--json") {

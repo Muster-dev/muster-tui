@@ -1,4 +1,4 @@
- muster  ⎇ main  ›  Set up sample-compose          compose · docker-compose.yml
+ muster  ›  Set up sample-compose         compose · docker-compose.yml   ⎇ main
 
  Found 3 services. Health checks and order are a best guess — change anything.
 
@@ -21,4 +21,4 @@
 
 
 
- enter choose · c create · e customize · esc cancel             ctrl+k commands
+          enter choose · c create · e customize · esc cancel    ctrl+k commands
