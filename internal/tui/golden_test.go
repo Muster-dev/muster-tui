@@ -112,6 +112,24 @@ func scenarios() []scenario {
 			until: []string{"Commands", "Search"},
 		},
 		{
+			name:  "deploy-done",
+			deps:  baseDeps,
+			send:  []tea.Msg{runLineMsg{"deploy api"}},
+			until: []string{"Deployed 1 service", "full log"},
+		},
+		{
+			name:  "explain",
+			deps:  func(t *testing.T) Deps { return deps07(t, "approved") },
+			send:  []tea.Msg{runLineMsg{"explain api"}},
+			until: []string{"Likely cause:", "Fix available"},
+		},
+		{
+			name:  "doctor",
+			deps:  baseDeps,
+			send:  []tea.Msg{runLineMsg{"doctor"}},
+			until: []string{"Fine", "run again"},
+		},
+		{
 			name:  "settings",
 			deps:  baseDeps,
 			send:  []tea.Msg{runLineMsg{"settings"}},

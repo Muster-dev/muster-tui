@@ -1,0 +1,24 @@
+ muster  ›  Deploy                                                          0ms
+
+
+
+
+
+    ✓ Deployed 1 service in 0ms
+    started 14:00
+
+     ✓ api                                                       0ms
+
+    enter back  ·  ctrl+o full log  ·  s status  ·  L logs api
+
+
+
+
+
+
+
+
+
+
+
+ acme-store  ⎇ main         enter/esc back · ctrl+o full log    ctrl+k commands
