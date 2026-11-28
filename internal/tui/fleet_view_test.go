@@ -125,3 +125,11 @@ func TestServerRestartConfirmsFirst(t *testing.T) {
 		t.Fatalf("argv:\n%s", argv)
 	}
 }
+
+func TestCleanOutputStripsBoxesAndSaysServer(t *testing.T) {
+	in := []string{"", "  \x1b[33m┌─Deploy──────┐\x1b[0m", "  │  ● web   ok│", "  └─────────────┘", "", "", "  * All 2 machine(s) passed\r"}
+	got := strings.Join(cleanOutput(nil, in), "\n")
+	if strings.ContainsAny(got, "┌│└\x1b\r") || !strings.Contains(got, "All 2 servers passed") || strings.Contains(got, "\n\n\n") {
+		t.Fatalf("%q", got)
+	}
+}

@@ -100,17 +100,24 @@ func (m Model) headerView() string {
 			others = append(others, t)
 		}
 	}
+	taskAt := -1
 	if n := len(others); n > 0 {
 		label := others[0].Label
 		if n > 1 {
 			label += fmt.Sprintf(" +%d", n-1)
 		}
+		taskAt = len(right)
 		right = append(right, theme.AccentFg.Render(m.env.Spin())+" "+theme.Dim.Render(trunc(label, 24)))
 	}
 	if st.Cloud.LoggedIn {
 		right = append(right, theme.OK.Render("●")+theme.Dim.Render(" Fleet Cloud"))
 	}
 	r := strings.Join(right, "   ") + " "
+	if taskAt >= 0 && width(left)+width(r)+1 > m.w {
+		// The breadcrumb matters more than what the background is doing.
+		right[taskAt] = theme.AccentFg.Render(m.env.Spin())
+		r = strings.Join(right, "   ") + " "
+	}
 	lw, cw, rw := width(left), width(centerTxt), width(r)
 	if centerTxt == "" || lw+cw+rw+6 > m.w {
 		return spread(left, r, m.w)

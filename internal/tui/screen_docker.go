@@ -356,6 +356,9 @@ func (s *dockerScreen) View(w, h int) string {
 		}
 	}
 	lines := []string{strings.Join(tabs, " "), ""}
+	if s.loaded && s.err != nil {
+		lines = []string{""} // no tabs to switch while Docker is down
+	}
 	switch {
 	case !s.loaded:
 		lines = append(lines, theme.AccentFg.Render(s.env.Spin())+" Asking Docker…")

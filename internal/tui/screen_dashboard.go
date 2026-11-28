@@ -321,8 +321,8 @@ func (d *dashboard) View(w, h int) string {
 			add(theme.Warning.Render(theme.GlyphWarn) + " " + trunc(wl, w-2))
 		}
 	}
-	// The next useful thing, at the bottom.
-	if len(lines) < h-1 {
+	// The next useful thing, at the bottom (unless Needs attention says it).
+	if len(warns) == 0 && len(lines) < h-1 {
 		for len(lines) < h-1 {
 			add("")
 		}
