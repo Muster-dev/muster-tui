@@ -161,6 +161,16 @@ func (s *fleetResultScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 		}
 		s.test, s.status = nil, nil
 		return s, s.Init(), true
+	case "d":
+		if s.running || !isMachineName(s.env, s.target) {
+			return s, nil, false
+		}
+		return s, serverAction(s.env, "deploy", s.target), true
+	case "o":
+		if s.running || !isMachineName(s.env, s.target) {
+			return s, nil, false
+		}
+		return s, serverAction(s.env, "open", s.target), true
 	case "y":
 		if s.running {
 			return s, nil, true
@@ -192,8 +202,87 @@ func (s *fleetResultScreen) pairing() int {
 	return n
 }
 
+// View is a card in the top third: the answer as a headline, a row per
+// server, and what to do next.
 func (s *fleetResultScreen) View(w, h int) string {
-	return block(s.lines(w), w, h)
+	return s.card(w).view(w, h)
+}
+
+func (s *fleetResultScreen) card(w int) card {
+	iw := cardInner(w)
+	again := []KeyHelp{{"r", "run again"}, {"enter", "back"}}
+	switch {
+	case s.running:
+		return card{icon: theme.AccentFg.Render(s.env.Spin()), headline: theme.Title.Render(s.doing()), actions: s.env.hints([]KeyHelp{{"esc", "cancel"}})}
+	case s.err != nil && s.err.Error() == "cancelled":
+		return card{icon: theme.Dim.Render(theme.GlyphSkip), headline: theme.Title.Render("Cancelled"), actions: s.env.hints(again)}
+	case s.err != nil:
+		body := wrapDim(fleet.ServerWords(errText(s.err)), iw)
+		body = append(append(body, ""), s.nextStep(iw)...)
+		return card{icon: theme.Err.Render(theme.GlyphFail), headline: theme.Err.Render(s.failedWhat()), body: body, actions: s.env.hints(again)}
+	case s.test != nil:
+		c := card{body: s.testRows(iw), sub: s.subline(len(s.test.Servers), "tested")}
+		r := s.test
+		switch {
+		case len(r.Servers) == 0:
+			c.icon, c.headline = theme.Dim.Render(theme.GlyphUnknown), theme.Title.Render(s.testSummary())
+		case r.Failed > 0:
+			c.icon, c.headline = theme.Err.Render(theme.GlyphFail), theme.Err.Render(s.testSummary())
+		case s.pairing() > 0:
+			c.icon, c.headline = theme.Warning.Render(theme.GlyphWarn), theme.Warning.Render(s.testSummary())
+			c.body = append(c.body, "", theme.Dim.Render("Open the server and press p to pair it."))
+		default:
+			c.icon, c.headline = theme.OK.Render(theme.GlyphOK), theme.OK.Render(s.testSummary())
+		}
+		c.actions = s.env.hints(s.nextKeys(r.Failed == 0 && s.pairing() == 0))
+		return c
+	case s.status != nil:
+		c := card{body: s.statusRows(iw), sub: s.subline(len(s.status), "checked")}
+		if sum := s.statusSummary(); s.allOnline() {
+			c.icon, c.headline = theme.OK.Render(theme.GlyphOK), theme.OK.Render(sum)
+		} else {
+			c.icon, c.headline = theme.Warning.Render(theme.GlyphWarn), theme.Warning.Render(sum)
+		}
+		c.actions = s.env.hints(s.nextKeys(s.allOnline()))
+		return c
+	}
+	return card{headline: theme.Dim.Render("Nothing to show yet"), actions: s.env.hints(again)}
+}
+
+// subline: "2 servers · tested just now".
+func (s *fleetResultScreen) subline(n int, verb string) string {
+	who := plural(n, "server")
+	if s.target != "" && s.isGroup() {
+		who = "group " + s.target + " · " + who
+	}
+	return who + " · " + verb + " " + s.env.Now().Format("15:04")
+}
+
+// nextKeys: run again, back, and deploy when one healthy server was tested.
+func (s *fleetResultScreen) nextKeys(ok bool) []KeyHelp {
+	out := []KeyHelp{{"r", "run again"}, {"enter", "back"}}
+	switch {
+	case !isMachineName(s.env, s.target):
+	case ok:
+		out = append(out, KeyHelp{"d", "deploy " + s.target})
+	default:
+		out = append(out, KeyHelp{"o", "open " + s.target})
+	}
+	return append(out, KeyHelp{"y", "copy"})
+}
+
+func isMachineName(env *Env, name string) bool {
+	_, ok := env.State.Fleet.Find(name)
+	return ok
+}
+
+func (s *fleetResultScreen) allOnline() bool {
+	for _, ms := range s.status {
+		if !ms.Reachable || ms.Error == "unpaired" {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *fleetResultScreen) lines(w int) []string {
@@ -211,9 +300,9 @@ func (s *fleetResultScreen) lines(w int) []string {
 		lines = append(lines, "")
 		return append(lines, s.nextStep(w)...)
 	case s.test != nil:
-		return append(lines, s.testLines(w)...)
+		return append(append(lines, s.testSummary(), ""), s.testRows(w)...)
 	case s.status != nil:
-		return append(lines, s.statusLines(w)...)
+		return append(append(lines, s.statusSummary(), ""), s.statusRows(w)...)
 	}
 	return append(lines, theme.Dim.Render("Nothing to show yet — press r."))
 }
@@ -268,7 +357,7 @@ func transportWord(t string) string {
 	return "SSH"
 }
 
-func (s *fleetResultScreen) testLines(w int) []string {
+func (s *fleetResultScreen) testRows(w int) []string {
 	r := s.test
 	if len(r.Servers) == 0 {
 		return wrapDim("The test didn't report any servers. Add one from Servers (a), then press r.", w)
@@ -303,16 +392,6 @@ func (s *fleetResultScreen) testLines(w int) []string {
 			out = append(out, strings.Repeat(" ", nameW+viaW+6)+style.Render(more))
 		}
 	}
-	out = append(out, "")
-	sum := s.testSummary()
-	switch {
-	case r.Failed > 0:
-		out = append(out, theme.Err.Render(sum))
-	case s.pairing() > 0:
-		out = append(out, theme.Warning.Render(sum)+theme.Dim.Render(" — open the server and press p to pair"))
-	default:
-		out = append(out, theme.OK.Render(sum))
-	}
 	return out
 }
 
@@ -333,7 +412,7 @@ func (s *fleetResultScreen) okDesc(t fleet.TestServer) string {
 	return strings.Join(parts, " · ")
 }
 
-func (s *fleetResultScreen) statusLines(w int) []string {
+func (s *fleetResultScreen) statusRows(w int) []string {
 	if len(s.status) == 0 {
 		return wrapDim("No servers answered. Add one from Servers (a), then press r.", w)
 	}
@@ -343,7 +422,7 @@ func (s *fleetResultScreen) statusLines(w int) []string {
 	}
 	nameW = min(nameW, 20)
 	var out []string
-	online, total := 0, len(s.status)
+
 	for i, ms := range s.status {
 		if i > 0 {
 			out = append(out, "")
@@ -355,7 +434,7 @@ func (s *fleetResultScreen) statusLines(w int) []string {
 		case ms.Error == "unpaired":
 			glyph, word = theme.Warning.Render(theme.GlyphWarn), theme.Warning.Render(srvPairing)
 		default:
-			online++
+
 			glyph, word = theme.OK.Render(theme.GlyphHealthy), theme.OK.Render(srvOnline)
 		}
 		var meta []string
@@ -388,11 +467,7 @@ func (s *fleetResultScreen) statusLines(w int) []string {
 			out = append(out, trunc(r, w))
 		}
 	}
-	out = append(out, "")
-	if online == total {
-		return append(out, theme.OK.Render(s.statusSummary()))
-	}
-	return append(out, theme.Warning.Render(s.statusSummary()))
+	return out
 }
 
 // statusSummary: "All servers online", "2 of 3 online".
@@ -400,7 +475,7 @@ func (s *fleetResultScreen) statusSummary() string {
 	online := 0
 	for _, ms := range s.status {
 		if ms.Reachable && ms.Error != "unpaired" {
-			online++
+
 		}
 	}
 	switch {
