@@ -33,16 +33,43 @@ main.go ──► tui.New(Deps) ──► tea.Program (alt screen, mouse unless 
 ## The root model (`internal/tui/app.go`)
 
 ```
- header      muster · project · ⎇ branch · › breadcrumb · screen status · background tasks · Fleet Cloud
- body        the active Screen (overlays draw in a centred box over it, dimmed)
- footer      clickable hints for this screen (≤ 5)                ? help  ctrl+k commands
+ header      muster  ›  Servers › byricky                        screen status · background tasks
+ body        the active Screen: a centred column (≤ 112) unless it is Wide
+ status bar  project  ⎇ branch  ● Fleet Cloud              hints for this screen (≤ 5)    ? help  ctrl+k commands
 ```
 
-* **One header line.** A screen's title is the breadcrumb; screens never
-  repeat it in their body. Screens that implement `Statuser` put a short
-  status on the right of the header ("● following", "✕ api failed · 12s",
-  "unsaved — ctrl+s saves"). The header's task spinner leaves out tasks the
-  active screen owns (it shows those itself).
+* **Header = where you are.** The brand and breadcrumb on the left; a
+  screen's title is the breadcrumb and screens never repeat it in their
+  body. Screens that implement `Statuser` put a short status on the right
+  ("● following", "✕ api failed · 12s"); otherwise the project's health
+  summary goes there. The task spinner leaves out tasks the active screen
+  owns (it shows those itself).
+* **Status bar = context and keys.** Project, branch and Fleet Cloud on the
+  left, the screen's hints and `? help  ctrl+k commands` on the right. When
+  both don't fit (narrow terminals) the context moves up to the header's
+  right side. "Press ctrl+c again to quit" takes the left side. An open
+  popup shows only its own keys.
+* **Layout and surfaces** (`surface.go`, after opencode's TUI): content is a
+  centred column at most `contentMax` (112) wide; screens implementing
+  `Wide` (deploy, docker, history, log streams, and the servers list when
+  split) get the full width. Panels are filled surfaces, not boxes:
+  `theme.Surface` (one step off the terminal background) and
+  `theme.Element` (selected row bands, inputs). Both are derived from the
+  terminal's real background (OSC 11, already queried by lipgloss) unless
+  `MUSTER_THEME`/`COLORFGBG` pin the theme. `paint` re-applies the
+  background after every reset so styled spans keep it; in the ASCII
+  profile (NO_COLOR, tests) surfaces are just padding.
+* **Result cards** (`card` in `surface.go`): fleet test/status, doctor,
+  explain, a finished deploy and short rollback/restart output render as a
+  card in the top third, as wide as its content (≤ 92): icon + headline
+  ("All servers passed", "1 of 2 failed"), a dim subline, aligned rows, and
+  clickable next actions (`Env.hints`, `key:` zones). Long bodies scroll.
+* **Master-detail**: from `splitMin` (110) columns the servers list is a
+  raised sidebar (≈ 30%, 40–50 cells) and the selected server's detail
+  (`serverScreen` embedded) is the right pane, updated live; enter/tab
+  focuses its actions, esc/left returns to the list. Narrower terminals keep
+  the single list.
+* **Home when empty**: a centred launcher (wordmark, tagline, four keys).
 * **Footers match the screen.** Screens implement `Footerer` and list at
   most ~5 keys for their current state; nothing draws a key row of its own
   above the footer. A key written `enter/esc` replays its first key when
@@ -52,10 +79,12 @@ main.go ──► tui.New(Deps) ──► tea.Program (alt screen, mouse unless 
   through `cleanOutput` (no colour codes or box drawing, "server" for
   "machine", no runs of blank lines).
 
-* **Layout** (`layout.go`): chrome is 2 rows; the screen gets `w-2 × h-2`.
-  Below 60×16 a "terminal too small" view is shown instead. Overlays
-  (palette, help, confirm) implement `Size(bw, bh)` and are drawn in a
-  bordered box over the dimmed screen; the root remembers the box (`ovRect`)
+* **Layout** (`layout.go`): chrome is 2 rows; the screen gets `w-2 × h-2`
+  (or the centred column). Below 60×16 a "terminal too small" view is shown
+  instead. Overlays (palette, help, confirm) implement `Size(bw, bh)` and
+  are drawn as a filled panel a quarter of the way down (title row + `esc`,
+  3 cells of padding, no border) over the dimmed screen; toasts float
+  top-right in a small panel with a coloured bar; the root remembers the box (`ovRect`)
   so a click outside closes it. All width math uses ANSI-aware
   `lipgloss.Width` / `ansi.Truncate` helpers in `textutil.go`.
 * **Keys** (`keys.go`): ctrl+c closes a popup, then cancels the foreground
@@ -180,7 +209,8 @@ Cancelling kills the child's process group (`Setpgid` + `cmd.Cancel`), so
 * `internal/prompt`: table tests for parse, did-you-mean, completion ranking,
   history.
 * `internal/tui`: teatest golden snapshots (`testdata/*.golden`) for dashboard,
-  deploy in progress, deploy failed + recovery, docker and onboarding at 80×24
-  and 140×40, rendered with the ASCII profile, a fixed clock and static
+  servers home (master-detail when wide), welcome, palette, fleet test cards,
+  server detail, deploy in progress / failed / done, explain, doctor, docker,
+  settings and onboarding at 80×24, 120×40 and 200×55, rendered with the ASCII profile, a fixed clock and static
   spinners; a resize-to-tiny test that walks sizes from 1×1 up.
   Update goldens with `go test ./internal/tui -update`.
