@@ -20,6 +20,9 @@ type serverScreen struct {
 	pickSel int
 	// restarting: a fleet restart is running (task id).
 	restartTask int
+	// embedded: drawn as the right pane of the servers list; blurred: the
+	// list has the focus, so no action is highlighted.
+	embedded, blurred bool
 }
 
 func newServerScreen(env *Env, name string) *serverScreen {
@@ -35,7 +38,7 @@ func (s *serverScreen) Init() tea.Cmd {
 	return nil
 }
 func (s *serverScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
-	if g, ok := msg.(restartGoMsg); ok && g.server == s.name {
+	if g, ok := msg.(restartGoMsg); ok && g.from == s {
 		return s, s.doRestart(g.svc)
 	}
 	m, ok := msg.(TaskMsg)
@@ -228,11 +231,15 @@ type fleetRestartMsg struct {
 
 // restartGoMsg comes back from the confirm's "Restart" button; the screen
 // starts the task when it sees it (tasks only start inside Update).
-type restartGoMsg struct{ server, svc string }
+// from is the screen that asked, so a cached server screen and the servers
+// list's right pane never both start it.
+type restartGoMsg struct {
+	from *serverScreen
+	svc  string
+}
 
 func (s *serverScreen) startRestart(svc string) tea.Cmd {
-	name := s.name
-	return func() tea.Msg { return restartGoMsg{name, svc} }
+	return func() tea.Msg { return restartGoMsg{s, svc} }
 }
 
 func (s *serverScreen) doRestart(svc string) tea.Cmd {
@@ -316,7 +323,10 @@ func (s *serverScreen) Click(id string, double bool) (Screen, tea.Cmd, bool) {
 	return s, nil, false
 }
 
-func (s *serverScreen) View(w, h int) string {
+func (s *serverScreen) View(w, h int) string { return block(s.lines(w), w, h) }
+
+// lines is the server's detail: connection, services and actions.
+func (s *serverScreen) lines(w int) []string {
 	mc, ok := s.machine()
 	if !ok {
 		lines := []string{""}
@@ -325,10 +335,14 @@ func (s *serverScreen) View(w, h int) string {
 		} else {
 			lines = append(lines, "There's no server called "+s.name+" any more.")
 		}
-		return block(lines, w, h)
+		return lines
 	}
 	ss := s.env.serverStatus(mc)
 	lines := []string{""}
+	if s.embedded {
+		// The pane names the server; the breadcrumb only says Servers.
+		lines = []string{spread(theme.Title.Render(s.name), s.Status(), w), ""}
+	}
 	conn := connection(mc)
 	if mc.Transport == "cloud" {
 		conn += theme.Dim.Render(" · agent " + mc.Target())
@@ -359,7 +373,7 @@ func (s *serverScreen) View(w, h int) string {
 
 	svcLines := s.serviceLines(w, ss)
 	actTitle, actLines := s.actionsSection(w)
-	if w >= 110 {
+	if w >= 110 && !s.embedded {
 		// Services on the left, actions on the right.
 		colW := w/2 - 2
 		left := append([]string{"", section("Services")}, svcLines...)
@@ -375,13 +389,12 @@ func (s *serverScreen) View(w, h int) string {
 			}
 			lines = append(lines, fit(l, colW)+"    "+r)
 		}
-		return block(lines, w, h)
+		return lines
 	}
 	lines = append(lines, "", section("Services"))
 	lines = append(lines, svcLines...)
 	lines = append(lines, "", section(actTitle))
-	lines = append(lines, actLines...)
-	return block(lines, w, h)
+	return append(lines, actLines...)
 }
 
 func (s *serverScreen) serviceLines(w int, ss serverState) []string {
@@ -465,15 +478,16 @@ func (s *serverScreen) actionLines(w int) []string {
 		label := fit(a.label, labelW)
 		desc := theme.Dim.Render(a.what)
 		var btn string
+		sel := i == s.sel && !s.blurred
 		if a.why != "" {
 			btn = "  " + theme.Rule.Render(label)
 			desc = theme.Dim.Render(a.why)
-		} else if i == s.sel {
+		} else if sel {
 			btn = theme.AccentFg.Render(theme.GlyphCursor) + " " + theme.Selected.Render(label)
 		} else {
 			btn = "  " + theme.Base.Render(label)
 		}
-		if i == s.sel && a.why != "" {
+		if sel && a.why != "" {
 			btn = theme.AccentFg.Render(theme.GlyphCursor) + " " + theme.Rule.Render(label)
 		}
 		row := btn + " " + fit(theme.Key.Render(a.key), 3) + " " + desc

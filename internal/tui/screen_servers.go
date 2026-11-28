@@ -22,6 +22,10 @@ type serversScreen struct {
 	addErr  string
 	addTask int
 	want    string
+	// Master-detail on wide terminals: the selected server's detail is the
+	// right pane; focusDetail sends keys to it instead of the list.
+	detail      *serverScreen
+	focusDetail bool
 }
 
 func newServers(env *Env) *serversScreen {
@@ -90,6 +94,15 @@ func (s *serversScreen) current() item {
 }
 
 func (s *serversScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
+	var detailCmd tea.Cmd
+	if s.detail != nil {
+		_, detailCmd = s.detail.Update(msg)
+	}
+	ns, cmd := s.update(msg)
+	return ns, tea.Batch(detailCmd, cmd)
+}
+
+func (s *serversScreen) update(msg tea.Msg) (Screen, tea.Cmd) {
 	switch m := msg.(type) {
 	case fleetMsg:
 		if s.want != "" {
@@ -225,6 +238,11 @@ func (s *serversScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 		s.adding.HandleKey(k)
 		return s, nil, true
 	}
+	if s.split() {
+		if ns, cmd, ok := s.splitKey(k); ok {
+			return ns, cmd, true
+		}
+	}
 	items := s.items()
 	cur := s.current()
 	target := ""
@@ -282,8 +300,22 @@ func (s *serversScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 }
 
 func (s *serversScreen) Click(id string, double bool) (Screen, tea.Cmd, bool) {
+	if d := s.paneDetail(); d != nil && (strings.HasPrefix(id, "act:") || strings.HasPrefix(id, "pick:")) {
+		s.focusDetail, d.blurred = true, false
+		_, cmd, ok := d.Click(id, double)
+		return s, cmd, ok
+	}
 	if arg, ok := zoneArg(id, "srv:row:"); ok {
 		i, _ := strconv.Atoi(arg)
+		s.focusDetail = false
+		if s.split() && i < len(s.items()) && s.items()[i].machine != nil {
+			// The right pane already shows it; a second click moves into it.
+			if i == s.sel || double {
+				s.focusDetail = true
+			}
+			s.sel = i
+			return s, nil, true
+		}
 		if i == s.sel || double {
 			s.sel = i
 			ns, cmd, _ := s.HandleKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -417,6 +449,9 @@ func (s *serversScreen) View(w, h int) string {
 		}
 		return block(lines, w, h)
 	}
+	if s.split() {
+		return s.splitView(w, h)
+	}
 	lines = append(lines, s.listLines(w, false)...)
 	if mc := s.current().machine; mc != nil {
 		if d := s.env.serverStatus(*mc).Detail; d != "" {
@@ -455,6 +490,20 @@ func (s *serversScreen) Footer() []KeyHelp {
 	if len(s.items()) == 0 {
 		return []KeyHelp{{"a", "add server"}, {"c", "cloud login"}}
 	}
+	if d := s.paneDetail(); d != nil {
+		if s.focusDetail {
+			out := d.Footer()
+			if n := len(out); n > 0 && out[n-1].Key == "esc" {
+				out[n-1].Desc = "servers"
+			}
+			return out
+		}
+		out := []KeyHelp{{"enter", "actions"}, {"d", "deploy"}, {"t", "test"}}
+		if s.env.serverStatus(*s.current().machine).Pairing {
+			out = append(out, KeyHelp{"p", "pair"})
+		}
+		return append(out, KeyHelp{"a", "add server"}, KeyHelp{"r", "refresh"})
+	}
 	out := []KeyHelp{{"enter", "open"}, {"d", "deploy"}}
 	if mc := s.current().machine; mc != nil && s.env.serverStatus(*mc).Pairing {
 		out = append(out, KeyHelp{"p", "pair"})
@@ -464,4 +513,161 @@ func (s *serversScreen) Footer() []KeyHelp {
 
 func (s *serversScreen) Keys() []KeyHelp {
 	return []KeyHelp{{"↑ ↓ / j k", "select"}, {"enter", "open the server"}, {"d", "deploy (asks first)"}, {"s", "status"}, {"t", "test the connection"}, {"b", "roll back (asks first)"}, {"p", "pair a server that runs muster"}, {"a", "add a server"}, {"c", "Fleet Cloud sign in / status"}, {"r", "check every server now"}}
+}
+
+// ── Master-detail (wide terminals) ──
+
+// Wide: the servers list goes master-detail at splitMin columns.
+func (s *serversScreen) Wide() bool { return s.split() }
+
+func (s *serversScreen) split() bool {
+	return s.adding == nil && s.env.MainW >= splitMin && len(s.items()) > 0
+}
+
+// paneDetail is the right pane's server screen (nil when not split or a
+// group is selected).
+func (s *serversScreen) paneDetail() *serverScreen {
+	if !s.split() {
+		return nil
+	}
+	mc := s.current().machine
+	if mc == nil {
+		s.focusDetail = false
+		return nil
+	}
+	if s.detail == nil || s.detail.name != mc.Name {
+		s.detail = newServerScreen(s.env, mc.Name)
+		s.detail.embedded = true
+	}
+	s.detail.blurred = !s.focusDetail
+	return s.detail
+}
+
+// splitKey handles the keys that differ in master-detail.
+func (s *serversScreen) splitKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
+	d := s.paneDetail()
+	if d == nil {
+		return s, nil, false
+	}
+	key := k.String()
+	if s.focusDetail {
+		if d.pick == "" {
+			switch key {
+			case "esc", "left", "h", "shift+tab":
+				s.focusDetail, d.blurred = false, true
+				return s, nil, true
+			}
+		}
+		_, cmd, ok := d.HandleKey(k)
+		return s, cmd, ok
+	}
+	switch key {
+	case "enter", "right", "l", "tab":
+		s.focusDetail, d.blurred = true, false
+		return s, nil, true
+	case "o", "R":
+		// Detail-only actions work from the list too.
+		_, cmd, ok := d.HandleKey(k)
+		return s, cmd, ok
+	}
+	return s, nil, false
+}
+
+// splitView: the list as a raised sidebar on the left, the selected
+// server's detail on the right; the pair is centred on very wide terminals.
+func (s *serversScreen) splitView(w, h int) string {
+	total := min(w, 172)
+	listW := clamp(total*30/100, 40, 50)
+	gap := 4
+	detW := total - listW - gap
+
+	var left []string
+	if s.key == "dashboard" {
+		left = append(left, spread(section("Servers"), s.statusLine(), listW-4), "")
+	}
+	left = append(left, s.sidebarLines(listW-4)...)
+	if !s.env.State.Cloud.LoggedIn && hasCloudServer(s.env.State.Fleet) {
+		left = append(left, "")
+		left = append(left, wrapDim("Sign in to Fleet Cloud: press c", listW-4)...)
+	}
+	side := panel(left, listW, 2, 1)
+	for len(side) < h {
+		side = append(side, paint("", listW, bgSeq(theme.Surface)))
+	}
+
+	right := []string{""} // level with the sidebar's padding
+	if d := s.paneDetail(); d != nil {
+		right = append(right, d.lines(detW)...)
+	} else if g := s.current().group; g != nil {
+		right = append(right, s.groupLines(*g, detW)...)
+	}
+	lp := strings.Repeat(" ", max((w-total)/2, 0))
+	out := make([]string, h)
+	for i := 0; i < h; i++ {
+		r := ""
+		if i < len(right) {
+			r = right[i]
+		}
+		out[i] = lp + side[i] + strings.Repeat(" ", gap) + fit(r, detW)
+	}
+	return strings.Join(out, "\n")
+}
+
+// sidebarLines: one row per server (dot, name, how it's doing), then groups.
+func (s *serversScreen) sidebarLines(w int) []string {
+	var out []string
+	groupHeader := false
+	for i, it := range s.items() {
+		selected := i == s.sel
+		var left, right string
+		if it.machine != nil {
+			ss := s.env.serverStatus(*it.machine)
+			left = ss.Glyph + " " + theme.Base.Render(it.machine.Name)
+			right = ss.Services
+			if right == "" || ss.Pairing || ss.Offline {
+				right = ss.Word
+			}
+		} else {
+			if !groupHeader {
+				out = append(out, "", theme.Dim.Render("Groups"))
+				groupHeader = true
+			}
+			g := it.group
+			left = theme.Dim.Render("◇") + " " + theme.Base.Render(g.Name)
+			right = theme.Dim.Render(plural(len(g.Machines), "server"))
+		}
+		row := spread(left, right, w-2)
+		if selected {
+			if s.focusDetail {
+				row = theme.Dim.Render(theme.GlyphCursor) + " " + row
+				row = paint(row, w, bgSeq(theme.Surface))
+			} else {
+				row = band(row, w)
+			}
+		} else {
+			row = "  " + row
+		}
+		out = append(out, s.env.mark("srv:row:"+strconv.Itoa(i), row))
+	}
+	if err := s.env.State.FleetHealthErr; err != nil {
+		out = append(out, "")
+		out = append(out, wrapDim("Couldn't check servers: "+err.Error(), w)...)
+	}
+	return out
+}
+
+// groupLines is the right pane for a group: its servers and how they're doing.
+func (s *serversScreen) groupLines(g fleet.Group, w int) []string {
+	lines := []string{spread(theme.Title.Render(g.Name), theme.Dim.Render("group · "+plural(len(g.Machines), "server")), w), ""}
+	for _, name := range g.Machines {
+		row := theme.Dim.Render(theme.GlyphUnknown) + " " + name
+		if mc, ok := s.env.State.Fleet.Find(name); ok {
+			ss := s.env.serverStatus(mc)
+			row = ss.Glyph + " " + fit(name, 18) + "  " + fit(ss.Word, 15) + "  " + theme.Dim.Render(connection(mc))
+		}
+		lines = append(lines, trunc(row, w))
+	}
+	lines = append(lines, "", theme.Dim.Render("Group actions"))
+	lines = append(lines, "  "+keyHint("d", "deploy to every server", "s", "status", "t", "test", "b", "roll back"))
+	return lines
 }
