@@ -131,69 +131,88 @@ func (s *doctorScreen) Status() string {
 	return strings.Join(parts, theme.Dim.Render(" · "))
 }
 
+// View is a card: how the project is doing as the headline, what needs
+// attention first, then what's fine.
 func (s *doctorScreen) View(w, h int) string {
-	lines := []string{""}
-	if s.running {
+	iw := cardInner(w)
+	again := []KeyHelp{{"r", "run again"}, {"esc", "back"}}
+	if s.running && s.result == nil {
 		what := "Checking the project…"
 		if s.fix {
 			what = "Fixing what doctor can…"
 		}
-		lines = append(lines, theme.AccentFg.Render(s.env.Spin())+" "+what)
-		if s.result == nil {
-			return block(lines, w, h)
-		}
-		lines = append(lines, "")
+		return card{icon: theme.AccentFg.Render(s.env.Spin()), headline: theme.Title.Render(what), actions: s.env.hints([]KeyHelp{{"esc", "cancel"}})}.view(w, h)
 	}
-	if s.err != nil {
-		lines = append(lines, theme.Err.Render(theme.GlyphFail)+" Doctor didn't finish")
-		for _, l := range wrap(errText(s.err), w-2) {
-			lines = append(lines, "  "+theme.Dim.Render(l))
+	if s.err != nil && s.result == nil {
+		return card{icon: theme.Err.Render(theme.GlyphFail), headline: theme.Err.Render("Doctor didn't finish"), body: wrapDim(errText(s.err), iw), actions: s.env.hints(again)}.view(w, h)
+	}
+	r := s.result
+	if r == nil {
+		return card{icon: theme.Dim.Render(theme.GlyphUnknown), headline: theme.Title.Render("No results yet"), actions: s.env.hints(again)}.view(w, h)
+	}
+	var bad, fine []engine.DoctorCheck
+	failed := 0
+	for _, c := range r.Checks {
+		switch c.Status {
+		case "pass":
+			fine = append(fine, c)
+		case "warn":
+			bad = append(bad, c)
+		default:
+			failed++
+			bad = append(bad, c)
 		}
-		lines = append(lines, "", theme.Dim.Render("Press r to try again."), "")
 	}
 	var body []string
-	if r := s.result; r != nil {
-		var bad, fine []engine.DoctorCheck
-		for _, c := range r.Checks {
-			if c.Status == "pass" {
-				fine = append(fine, c)
-			} else {
-				bad = append(bad, c)
+	if s.err != nil {
+		body = append(body, theme.Err.Render(theme.GlyphFail)+" "+trunc(errText(s.err), iw-2), "")
+	}
+	if len(bad) > 0 {
+		body = append(body, section("Needs attention"))
+		for _, c := range bad {
+			g := theme.Warning.Render(theme.GlyphWarn)
+			if c.Status != "warn" {
+				g = theme.Err.Render(theme.GlyphFail)
 			}
-		}
-		if len(bad) > 0 {
-			body = append(body, section("Needs attention"))
-			for _, c := range bad {
-				g := theme.Warning.Render(theme.GlyphWarn)
-				if c.Status != "warn" {
-					g = theme.Err.Render(theme.GlyphFail)
-				}
-				body = append(body, trunc(g+" "+c.Name+theme.Dim.Render("  "+c.Category), w))
-				for _, l := range wrap(c.Detail, w-4) {
+			body = append(body, trunc(g+" "+c.Name+theme.Dim.Render("  "+c.Category), iw))
+			if c.Detail != "" {
+				for _, l := range wrap(c.Detail, iw-2) {
 					body = append(body, "  "+theme.Dim.Render(l))
 				}
 			}
-			body = append(body, "")
 		}
-		if len(fine) > 0 {
-			body = append(body, section("Fine")+theme.Dim.Render("  "+plural(len(fine), "check")))
-			for _, c := range fine {
-				row := theme.OK.Render(theme.GlyphOK) + " " + c.Name
-				if c.Detail != "" {
-					row += theme.Dim.Render(" · " + c.Detail)
-				}
-				body = append(body, trunc(row, w))
+		body = append(body, "")
+	}
+	if len(fine) > 0 {
+		body = append(body, section("Fine")+theme.Dim.Render("  "+plural(len(fine), "check")))
+		for _, c := range fine {
+			row := theme.OK.Render(theme.GlyphOK) + " " + c.Name
+			if c.Detail != "" {
+				row += theme.Dim.Render(" · " + c.Detail)
 			}
+			body = append(body, trunc(row, iw))
 		}
-	} else if !s.running && s.err == nil {
-		body = append(body, theme.Dim.Render("No results yet — press r to run doctor."))
 	}
-	avail := h - len(lines)
-	sc := clamp(s.scroll, 0, max(len(body)-avail, 0))
-	for i := sc; i < len(body) && i < sc+avail; i++ {
-		lines = append(lines, body[i])
+	c := card{body: body, scroll: s.scroll, sub: plural(len(r.Checks), "check")}
+	switch {
+	case s.running:
+		c.icon, c.headline = theme.AccentFg.Render(s.env.Spin()), theme.Title.Render("Fixing what doctor can…")
+	case failed > 0:
+		c.icon, c.headline = theme.Err.Render(theme.GlyphFail), theme.Err.Render(plural(len(bad), "check")+" need attention")
+	case len(bad) > 0:
+		c.icon, c.headline = theme.Warning.Render(theme.GlyphWarn), theme.Warning.Render(plural(len(bad), "warning"))
+	default:
+		c.icon, c.headline = theme.OK.Render(theme.GlyphOK), theme.OK.Render("Everything looks fine")
 	}
-	return block(lines, w, h)
+	if len(bad) == 1 && failed > 0 {
+		c.headline = theme.Err.Render("1 check needs attention")
+	}
+	keys := []KeyHelp{}
+	if len(bad) > 0 {
+		keys = append(keys, KeyHelp{"f", "fix what you can"})
+	}
+	c.actions = s.env.hints(append(keys, again...))
+	return c.view(w, h)
 }
 
 func (s *doctorScreen) Hint() string { return "" }

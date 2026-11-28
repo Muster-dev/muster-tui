@@ -498,6 +498,9 @@ func (s *logsScreen) doing() string {
 }
 
 func (s *logsScreen) View(w, h int) string {
+	if s.output && s.done && !s.running && !s.searching && len(s.lines) > 0 && len(s.lines) <= max(h-12, 4) {
+		return s.outputCard(w, h)
+	}
 	lines := []string{}
 	bodyH := h
 	if s.searching {
@@ -632,5 +635,33 @@ func shortPath(p string) string {
 	return filepath.Base(p)
 }
 
-// Wide: tables and log streams use the whole width.
-func (s *logsScreen) Wide() bool { return true }
+// Wide: log streams use the whole width; a one-shot command's output is
+// read in the centred column.
+func (s *logsScreen) Wide() bool { return !s.output }
+
+// outputCard: a short finished command (rollback, restart, fleet …) as a
+// card, its last ✓/✕ line as the headline.
+func (s *logsScreen) outputCard(w, h int) string {
+	iw := cardInner(w)
+	c := card{icon: theme.OK.Render(theme.GlyphOK), headline: theme.OK.Render(s.title + " done")}
+	for i := len(s.lines) - 1; i >= 0; i-- {
+		l := strings.TrimSpace(stripANSI(s.lines[i]))
+		if t, ok := strings.CutPrefix(l, theme.GlyphOK+" "); ok {
+			c.headline = theme.OK.Render(t)
+			break
+		}
+		if t, ok := strings.CutPrefix(l, theme.GlyphFail+" "); ok {
+			c.icon, c.headline = theme.Err.Render(theme.GlyphFail), theme.Err.Render(t)
+			break
+		}
+	}
+	if s.err != nil {
+		c.icon, c.headline = theme.Err.Render(theme.GlyphFail), theme.Err.Render(s.title+" failed")
+		c.sub = fleet.ServerWords(errText(s.err))
+	}
+	for _, l := range s.lines {
+		c.body = append(c.body, styleLogLine(trunc(l, iw), iw))
+	}
+	c.actions = s.env.hints([]KeyHelp{{"enter", "back"}, {"y", "copy"}})
+	return c.view(w, h)
+}

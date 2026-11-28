@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/Muster-dev/muster-tui/internal/theme"
@@ -101,6 +102,7 @@ type card struct {
 	sub      string // a dim line under the headline ("" = none)
 	body     []string
 	actions  string // hint row (clickable), "" = none
+	scroll   int    // first body row shown when the body is taller than the room
 }
 
 // cardWidth is how wide a card is drawn in a w-cell body.
@@ -132,16 +134,31 @@ func (c card) view(w, h int) string {
 	if c.sub != "" {
 		lines = append(lines, theme.Dim.Render(c.sub))
 	}
-	if len(c.body) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, c.body...)
-	}
-	if c.actions != "" {
-		lines = append(lines, "", c.actions)
-	}
 	padY := 1
 	if h < 20 {
 		padY = 0
+	}
+	if len(c.body) > 0 {
+		// Room for the body: the frame, headline, sub and actions come first.
+		room := h - 2*padY - len(lines) - 2
+		if c.actions != "" {
+			room -= 2
+		}
+		body := c.body
+		if room > 0 && len(body) > room {
+			sc := clamp(c.scroll, 0, len(body)-room+1)
+			body = body[sc:min(sc+room-1, len(body))]
+			more := theme.Dim.Render(fmt.Sprintf("↓ %d more — ↑↓ scroll", len(c.body)-sc-len(body)))
+			if sc+len(body) >= len(c.body) {
+				more = theme.Dim.Render("↑ scroll up")
+			}
+			body = append(append([]string{}, body...), more)
+		}
+		lines = append(lines, "")
+		lines = append(lines, body...)
+	}
+	if c.actions != "" {
+		lines = append(lines, "", c.actions)
 	}
 	box := panel(lines, cw, cardPadX(cw), padY)
 	top := 1
