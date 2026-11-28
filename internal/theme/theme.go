@@ -6,6 +6,7 @@
 package theme
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -92,7 +93,54 @@ func Init() {
 	}
 	if dark, ok := darkFromEnv(); ok {
 		lipgloss.SetHasDarkBackground(dark)
+		return
 	}
+	if NoColor() {
+		return
+	}
+	// The terminal told lipgloss its background (OSC 11, cached), so raise
+	// the surfaces from that colour: a fixed grey would look sunken on a
+	// lighter background like #282c34.
+	if c, ok := lipgloss.DefaultRenderer().Output().BackgroundColor().(termenv.RGBColor); ok {
+		setSurfaces(string(c))
+	}
+}
+
+// setSurfaces derives Surface and Element from the terminal background
+// (#rrggbb): a step and two steps toward white on dark terminals, toward
+// black on light ones.
+func setSurfaces(bg string) {
+	r, g, b, ok := parseHex(bg)
+	if !ok {
+		return
+	}
+	dark := (r*299+g*587+b*114)/1000 < 128
+	step := func(t float64) string {
+		target := 255.0
+		if !dark {
+			target = 0
+		}
+		mix := func(v int) int { return int(float64(v) + (target-float64(v))*t + 0.5) }
+		return fmt.Sprintf("#%02x%02x%02x", mix(r), mix(g), mix(b))
+	}
+	s, e := step(0.05), step(0.10)
+	if !dark {
+		s, e = step(0.035), step(0.08)
+	}
+	Surface = lipgloss.AdaptiveColor{Light: s, Dark: s}
+	Element = lipgloss.AdaptiveColor{Light: e, Dark: e}
+}
+
+func parseHex(h string) (r, g, b int, ok bool) {
+	h = strings.TrimPrefix(h, "#")
+	if len(h) != 6 {
+		return 0, 0, 0, false
+	}
+	n, err := strconv.ParseUint(h, 16, 32)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return int(n >> 16 & 0xff), int(n >> 8 & 0xff), int(n & 0xff), true
 }
 
 func darkFromEnv() (dark, ok bool) {
