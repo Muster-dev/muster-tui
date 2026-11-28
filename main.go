@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Muster-dev/muster-tui/internal/auth"
 	"github.com/Muster-dev/muster-tui/internal/config"
@@ -26,16 +27,20 @@ Usage:
 
 Flags:
   -C, --dir <path>     run as if started in <path>
+      --no-mouse       leave the mouse to the terminal (native text selection)
       --set-token <t>  save a MUSTER_TOKEN for the CLI's --json commands
   -v, --version        print the version
   -h, --help           show this help
 
-Inside the TUI type commands at the prompt (deploy, logs api, docker, help),
-press / for completions, Ctrl+K for every action, ? for keys.
+Inside the TUI press ctrl+k (or / or :) for every action and to type commands
+(deploy, logs api, docker), ? for keys. Click rows and hints with the mouse;
+turn it off with --no-mouse, MUSTER_TUI_MOUSE=off or "tui_mouse": "off" in
+~/.muster/settings.json.
 `
 
 func main() {
 	dir := ""
+	noMouse := false
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; a {
@@ -56,6 +61,8 @@ func main() {
 			}
 			fmt.Println("Token saved.")
 			return
+		case "--no-mouse":
+			noMouse = true
 		case "-C", "--dir":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "usage: muster-tui --dir <path>")
@@ -68,13 +75,31 @@ func main() {
 			os.Exit(2)
 		}
 	}
-	if err := run(dir); err != nil {
+	if err := run(dir, noMouse || mouseOff()); err != nil {
 		fmt.Fprintf(os.Stderr, "muster-tui: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(dir string) error {
+// mouseOff reads MUSTER_TUI_MOUSE and the tui_mouse global setting.
+func mouseOff() bool {
+	switch strings.ToLower(os.Getenv("MUSTER_TUI_MOUSE")) {
+	case "off", "0", "false", "no":
+		return true
+	case "on", "1", "true", "yes":
+		return false
+	}
+	if g, err := config.LoadGlobal(); err == nil {
+		if v, ok := g.Value("tui_mouse"); ok {
+			if s, ok := v.(string); ok && strings.EqualFold(s, "off") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func run(dir string, noMouse bool) error {
 	theme.Init()
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -87,7 +112,7 @@ func run(dir string) error {
 		}
 	}
 
-	deps := tui.Deps{Cwd: cwd, Version: version, HistoryPath: filepath.Join(config.MusterHome(), "tui_history")}
+	deps := tui.Deps{Cwd: cwd, Version: version, HistoryPath: filepath.Join(config.MusterHome(), "tui_history"), NoMouse: noMouse}
 
 	// Project: walk up from cwd. A broken muster.json is reported, not fatal.
 	if path, err := config.Find(cwd); err == nil {
@@ -113,7 +138,11 @@ func run(dir string) error {
 	}
 
 	m := tui.New(deps)
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if !noMouse {
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(m, opts...)
 	final, err := p.Run()
 	if fm, ok := final.(tui.Model); ok {
 		fm.Shutdown()

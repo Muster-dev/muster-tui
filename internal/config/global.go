@@ -38,6 +38,7 @@ var GlobalFields = []GlobalField{
 	{Key: "update_check", Label: "Check for updates", Kind: "enum", Options: []string{"on", "off"}, Default: "on"},
 	{Key: "tui_mode", Label: "Interactive UI", Kind: "enum", Options: []string{"go", "bash"}, Default: "go", Help: "go = muster-tui, bash = classic menus"},
 	{Key: "minimal", Label: "Minimal mode", Kind: "bool", Default: false, Help: "Plain text output for the CLI"},
+	{Key: "tui_mouse", Label: "Mouse in muster-tui", Kind: "enum", Options: []string{"on", "off"}, Default: "on", Help: "off = your terminal's own text selection (takes effect next start)"},
 }
 
 // LoadGlobal reads ~/.muster/settings.json (empty object when missing).

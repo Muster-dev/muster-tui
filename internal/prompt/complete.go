@@ -205,3 +205,7 @@ func fuzzyScore(query, target string) (int, bool) {
 	score -= len(t) - len(q) // tighter matches first
 	return score, true
 }
+
+// FuzzyScore matches query as a subsequence of target (case-insensitive),
+// ranking prefix, word-start and consecutive hits higher.
+func FuzzyScore(query, target string) (int, bool) { return fuzzyScore(query, target) }

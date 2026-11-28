@@ -11,14 +11,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// dashboard is the default screen: health, last deploys, activity, warnings.
+// dashboard is the home screen. In a project it shows the services, recent
+// activity and a short servers section; with no muster.json it is the
+// servers home (or a welcome when there are no servers either).
 type dashboard struct {
 	env      *Env
 	projects []registry.Project // registered projects, shown when there's no project here
+	srv      *serversScreen     // the servers list (home without a project)
+	sel      int                // selected row: services, then servers
 }
 
 func newDashboard(env *Env) *dashboard {
-	d := &dashboard{env: env}
+	d := &dashboard{env: env, srv: newServers(env)}
+	d.srv.key = "dashboard"
 	if env.Project == nil {
 		if pf, err := registry.Load(); err == nil {
 			d.projects = pf.Projects
@@ -27,39 +32,188 @@ func newDashboard(env *Env) *dashboard {
 	return d
 }
 
-func (d *dashboard) Key() string                                    { return "dashboard" }
-func (d *dashboard) Title() string                                  { return "Overview" }
-func (d *dashboard) Init() tea.Cmd                                  { return nil }
-func (d *dashboard) Update(tea.Msg) (Screen, tea.Cmd)               { return d, nil }
-func (d *dashboard) Hint() string                                   { return "" }
-func (d *dashboard) Keys() []KeyHelp                                { return nil }
-func (d *dashboard) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) { return d, nil, false }
+func (d *dashboard) Key() string   { return "dashboard" }
+func (d *dashboard) Title() string { return "Home" }
+func (d *dashboard) Init() tea.Cmd { return nil }
+func (d *dashboard) Hint() string  { return "" }
+
+// serversHome: no project here, so the servers are the home screen.
+func (d *dashboard) serversHome() bool {
+	st := d.env.State
+	return st.Project == nil && (len(st.Fleet.Machines) > 0 || !st.FleetLoaded)
+}
+
+func (d *dashboard) Capturing() bool { return d.env.State.Project == nil && d.srv.Capturing() }
+
+func (d *dashboard) Update(msg tea.Msg) (Screen, tea.Cmd) {
+	_, cmd := d.srv.Update(msg)
+	return d, cmd
+}
+
+// rows are the selectable rows of the project dashboard.
+type dashRow struct{ kind, id string }
+
+func (d *dashboard) rows() []dashRow {
+	st := d.env.State
+	var out []dashRow
+	for _, k := range st.ServiceKeys() {
+		out = append(out, dashRow{"service", k})
+	}
+	for _, mc := range st.Fleet.Machines {
+		out = append(out, dashRow{"server", mc.Name})
+	}
+	return out
+}
+
+func (d *dashboard) openRow(r dashRow) tea.Cmd {
+	if r.kind == "server" {
+		return serverAction(d.env, "open", r.id)
+	}
+	return nav(newServiceScreen(d.env, r.id))
+}
+
+func (d *dashboard) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
+	st := d.env.State
+	if st.Project == nil {
+		if d.serversHome() || d.srv.adding != nil {
+			_, cmd, ok := d.srv.HandleKey(k)
+			return d, cmd, ok
+		}
+		switch k.String() {
+		case "s", "enter":
+			return d, runLine("setup"), true
+		case "a":
+			d.srv.startAdd(nil)
+			return d, nil, true
+		case "c":
+			return d, runLine("cloud login"), true
+		case "D":
+			return d, runLine("docker"), true
+		}
+		return d, nil, false
+	}
+	rows := d.rows()
+	var cur dashRow
+	if d.sel < len(rows) {
+		cur = rows[d.sel]
+	}
+	switch k.String() {
+	case "j", "down":
+		d.sel = clamp(d.sel+1, 0, len(rows)-1)
+	case "k", "up":
+		d.sel = clamp(d.sel-1, 0, len(rows)-1)
+	case "enter", "right", "l":
+		if cur.id != "" {
+			return d, d.openRow(cur), true
+		}
+	case "d":
+		if cur.kind == "server" {
+			return d, serverAction(d.env, "deploy", cur.id), true
+		}
+		return d, runLine("deploy"), true
+	case "L":
+		if cur.kind == "service" {
+			return d, runLine("logs " + cur.id), true
+		}
+	case "r":
+		return d, tea.Batch(refresh("status"), d.env.loadFleetHealth()), true
+	case "D":
+		return d, runLine("docker"), true
+	default:
+		return d, nil, false
+	}
+	return d, nil, true
+}
+
+func (d *dashboard) Click(id string, double bool) (Screen, tea.Cmd, bool) {
+	if d.env.State.Project == nil {
+		if arg, ok := zoneArg(id, "home:"); ok {
+			return d, runLine(arg), true
+		}
+		_, cmd, ok := d.srv.Click(id, double)
+		return d, cmd, ok
+	}
+	if arg, ok := zoneArg(id, "dash:row:"); ok {
+		for i, r := range d.rows() {
+			if r.kind+":"+r.id == arg {
+				if i == d.sel || double {
+					d.sel = i
+					return d, d.openRow(r), true
+				}
+				d.sel = i
+				return d, nil, true
+			}
+		}
+	}
+	return d, nil, false
+}
+
+func (d *dashboard) Footer() []KeyHelp {
+	st := d.env.State
+	if st.Project == nil {
+		if d.serversHome() || d.srv.adding != nil {
+			return d.srv.Footer()
+		}
+		return []KeyHelp{{"s", "set up this folder"}, {"a", "add server"}, {"D", "docker"}}
+	}
+	out := []KeyHelp{{"enter", "open"}, {"d", "deploy"}}
+	rows := d.rows()
+	if d.sel < len(rows) && rows[d.sel].kind == "service" {
+		out = append(out, KeyHelp{"L", "logs"})
+	}
+	return append(out, KeyHelp{"r", "refresh"})
+}
+
+func (d *dashboard) Keys() []KeyHelp {
+	if d.env.State.Project == nil {
+		if d.serversHome() {
+			return d.srv.Keys()
+		}
+		return []KeyHelp{{"s", "set up this folder"}, {"a", "add a server"}, {"c", "sign in to Fleet Cloud"}, {"D", "Docker on this computer"}}
+	}
+	return []KeyHelp{{"↑ ↓ / j k", "select a service or server"}, {"enter", "open it"}, {"d", "deploy (servers ask first)"}, {"L", "logs of the selected service"}, {"r", "check health now"}, {"D", "Docker"}}
+}
+
+func (d *dashboard) welcome(w, h int) string {
+	var lines []string
+	add := func(s ...string) { lines = append(lines, s...) }
+	add(section("Welcome to muster"), "")
+	add(wrap("There's no muster.json in this folder and no servers yet. Pick one to get going:", w)...)
+	add("")
+	opt := func(id, label, key, desc string) {
+		add("  " + d.env.mark("home:"+id, button(label, false)) + " " + fit(theme.Key.Render(key), 2) + theme.Dim.Render(desc))
+	}
+	opt("setup", "Set up this folder", "s", "scan it and create muster.json")
+	opt("fleet add", "Add a server", "a", "deploy to it over SSH or Fleet Cloud")
+	if !d.env.State.Cloud.LoggedIn {
+		opt("cloud login", "Sign in to Fleet Cloud", "c", "reach servers through the relay")
+	}
+	opt("docker", "Docker", "D", "containers, images and disk on this computer")
+	if len(d.projects) > 0 {
+		add("", section("Your projects"))
+		for i, p := range d.projects {
+			if i == 6 {
+				add(theme.Dim.Render(fmt.Sprintf("  … %d more · muster projects", len(d.projects)-6)))
+				break
+			}
+			add("  " + fit(p.Name, 18) + " " + theme.Dim.Render(p.Path))
+		}
+		add(theme.Dim.Render("  Open one with ") + code("muster-tui -C <path>"))
+	}
+	return block(lines, w, h)
+}
 
 func (d *dashboard) View(w, h int) string {
 	st := d.env.State
 	now := d.env.Now()
+	if st.Project == nil {
+		if d.serversHome() || d.srv.adding != nil {
+			return d.srv.View(w, h)
+		}
+		return d.welcome(w, h)
+	}
 	var lines []string
 	add := func(s ...string) { lines = append(lines, s...) }
-
-	if st.Project == nil {
-		add(section("Welcome to muster"), "")
-		add(wrap("There's no muster.json in this folder yet. muster can scan it, find your services and set up deploys in under a minute.", w)...)
-		add("", "  "+code("setup")+theme.Dim.Render("     scan this folder"))
-		add("  " + code("docker") + theme.Dim.Render("    containers, images and disk — works anywhere"))
-		add("  " + code("servers") + theme.Dim.Render("   your fleet machines"))
-		if len(d.projects) > 0 {
-			add("", section("Your projects"))
-			for i, p := range d.projects {
-				if i == 6 {
-					add(theme.Dim.Render(fmt.Sprintf("  … %d more · muster projects", len(d.projects)-6)))
-					break
-				}
-				add("  " + fit(p.Name, 18) + " " + theme.Dim.Render(p.Path))
-			}
-			add(theme.Dim.Render("  Open one with ") + code("muster-tui -C <path>"))
-		}
-		return block(lines, w, h)
-	}
 
 	right := ""
 	switch {
@@ -70,21 +224,23 @@ func (d *dashboard) View(w, h int) string {
 	case !st.StatusLoaded && d.env.Engine != nil:
 		right = theme.AccentFg.Render(d.env.Spin()) + theme.Dim.Render(" checking")
 	}
-	add(spread(section(st.Project.Name()), right, w), "")
+	add(spread(section("Services"), right, w), "")
 
 	keys := st.ServiceKeys()
+	rows := d.rows()
+	d.sel = clamp(d.sel, 0, max(len(rows)-1, 0))
 	nameW := 7
 	for _, k := range keys {
 		nameW = max(nameW, width(k))
 	}
 	nameW = min(nameW, 16)
 	showVersion := w >= 70
-	header := "  " + fit("SERVICE", nameW) + "  " + fit("HEALTH", 12) + "  " + fit("LAST DEPLOY", 20)
+	header := "    " + fit("Service", nameW) + "  " + fit("Health", 12) + "  " + fit("Last deploy", 20)
 	if showVersion {
-		header += "  VERSION"
+		header += "  Version"
 	}
 	add(theme.Dim.Render(header))
-	for _, k := range keys {
+	for i, k := range keys {
 		ss := st.Svc(k)
 		glyph := healthGlyph(ss.Shown())
 		health := healthWord(ss.Shown())
@@ -114,20 +270,46 @@ func (d *dashboard) View(w, h int) string {
 				version = v
 			}
 		}
-		row := glyph + " " + fit(k, nameW) + "  " + fit(health, 12) + "  " + fit(last, 20)
+		cur := " "
+		if i == d.sel {
+			cur = theme.AccentFg.Render(theme.GlyphCursor)
+		}
+		row := cur + " " + glyph + " " + fit(k, nameW) + "  " + fit(health, 12) + "  " + fit(last, 20)
 		if showVersion {
 			row += "  " + version
 		}
-		add(row)
+		add(d.env.mark("dash:row:service:"+k, fit(row, w)))
+	}
+
+	// Servers: a short section; Enter opens one.
+	if machines := st.Fleet.Machines; len(machines) > 0 {
+		add("", spread(section("Servers"), d.srv.statusLine(), w))
+		var names []string
+		for _, mc := range machines {
+			names = append(names, mc.Name)
+		}
+		c := serverCols(w-2, names)
+		for i, mc := range machines {
+			ss := d.env.serverStatus(mc)
+			cur := " "
+			if len(keys)+i == d.sel {
+				cur = theme.AccentFg.Render(theme.GlyphCursor)
+			}
+			row := cur + "   " + fit(mc.Name, c.name) + "  " + fit(ss.Glyph+" "+ss.Word, c.status) + "  " + fit(theme.Dim.Render(connection(mc)), c.conn)
+			if c.svc > 0 && ss.Services != "" {
+				row += "  " + ss.Services
+			}
+			add(d.env.mark("dash:row:server:"+mc.Name, fit(row, w)))
+		}
 	}
 
 	// Recent activity
-	if len(st.History) > 0 && len(lines) < h-3 {
+	if len(st.History) > 0 && len(lines) < h-4 {
 		add("", section("Recent activity"))
 		evs := st.History
-		n := min(len(evs), 5)
+		n := min(len(evs), max(min(5, h-len(lines)-3), 1))
 		for i := len(evs) - 1; i >= len(evs)-n; i-- {
-			add(activityLine(evs[i], now, w))
+			add(" " + activityLine(evs[i], now, w-1))
 		}
 	}
 
@@ -138,6 +320,13 @@ func (d *dashboard) View(w, h int) string {
 		for _, wl := range warns {
 			add(theme.Warning.Render(theme.GlyphWarn) + " " + trunc(wl, w-2))
 		}
+	}
+	// The next useful thing, at the bottom.
+	if len(lines) < h-1 {
+		for len(lines) < h-1 {
+			add("")
+		}
+		add(trunc(stateHint(d.env), w))
 	}
 	return block(lines, w, h)
 }

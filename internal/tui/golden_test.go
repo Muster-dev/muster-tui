@@ -64,7 +64,7 @@ func scenarios() []scenario {
 				return d
 			},
 			send:  []tea.Msg{runLineMsg{"docker"}},
-			until: []string{"acme-api-1", "927MB"},
+			until: []string{"acme-api-1", "acme-redis-1"},
 			wide:  []string{"3.10%"},
 		},
 		{
@@ -73,7 +73,7 @@ func scenarios() []scenario {
 				dir, _ := filepath.Abs("testdata/sample-compose")
 				return Deps{Cwd: dir, Engine: fakeEngine(t, ""), Now: func() time.Time { return fixedNow }, NoAutoLoad: true, Branch: "main"}
 			},
-			send:  []tea.Msg{tea.KeyMsg{Type: tea.KeyEnter}},
+			send:  []tea.Msg{runLineMsg{"setup"}, tea.KeyMsg{Type: tea.KeyEnter}},
 			until: []string{"Create", "Customize"},
 		},
 	}

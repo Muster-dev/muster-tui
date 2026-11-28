@@ -580,7 +580,6 @@ func (d *deployScreen) onTaskEnd(canceled bool) tea.Cmd {
 		d.phase, d.choice = phFailed, 0
 		cmds := []tea.Cmd{refresh("history")}
 		if d.env.Active == d.Key() {
-			cmds = append(cmds, func() tea.Msg { return focusMsg{focusMain} })
 		} else {
 			cmds = append(cmds, toast(lvlErr, r.key+" failed to deploy — retry, rollback "+r.key+", skip or abort"))
 		}

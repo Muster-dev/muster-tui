@@ -3,57 +3,41 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Muster-dev/muster-tui/internal/fleet"
 	"github.com/Muster-dev/muster-tui/internal/theme"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-type testResult struct {
-	ok      bool
-	latency time.Duration
-	err     string
-	running bool
-}
-
-// serversScreen: fleet machines and groups, cloud login, and actions.
+// serversScreen is the list of fleet servers (and groups) with live status.
+// It is also the home screen when the folder has no muster.json.
 type serversScreen struct {
 	env     *Env
+	key     string // "servers", or "dashboard" when it is the home screen
 	sel     int
-	results map[string]*testResult
-	tasks   map[int]string
 	adding  *form
 	addErr  string
 	addTask int
 	want    string
-	// fleet status --json results (U), by machine name
-	health    map[string]fleet.MachineStatus
-	healthID  int
-	healthErr string
-}
-
-type fleetStatusMsg struct {
-	st  []fleet.MachineStatus
-	err error
-}
-
-type sshTestMsg struct {
-	name    string
-	latency time.Duration
-	err     error
 }
 
 func newServers(env *Env) *serversScreen {
-	return &serversScreen{env: env, results: map[string]*testResult{}, tasks: map[int]string{}, health: map[string]fleet.MachineStatus{}}
+	return &serversScreen{env: env, key: "servers"}
 }
 
-func (s *serversScreen) Key() string     { return "servers" }
+func (s *serversScreen) Key() string     { return s.key }
 func (s *serversScreen) Title() string   { return "Servers" }
 func (s *serversScreen) Capturing() bool { return s.adding != nil }
 func (s *serversScreen) Close()          { s.env.Tasks.CancelOwner(s.Key()) }
-func (s *serversScreen) Init() tea.Cmd   { return refresh("fleet") }
+func (s *serversScreen) Init() tea.Cmd {
+	if s.key != "servers" {
+		return nil
+	}
+	return tea.Batch(refresh("fleet"), s.env.loadFleetHealth())
+}
 
 func (s *serversScreen) selectMachine(name string) { s.want = name }
 
@@ -66,12 +50,12 @@ func (s *serversScreen) startAdd(args []string) {
 		target = args[1]
 	}
 	s.adding = newForm([]field{
-		{key: "name", label: "Name", kind: fText, value: name, help: "e.g. prod-1"},
+		{key: "name", label: "Name", kind: fText, value: name, help: "what you'll call it, e.g. prod-1"},
 		{key: "target", label: "user@host", kind: fText, value: target, help: "e.g. deploy@10.0.0.5"},
+		{key: "transport", label: "Connect with", kind: fEnum, opts: []string{"ssh", "cloud"}, value: "ssh", help: "ssh = straight from this computer · cloud = through Fleet Cloud"},
+		{key: "mode", label: "On the server", kind: fEnum, opts: []string{"push", "muster"}, value: "push", help: "push = send hooks over SSH · muster = the server runs muster itself"},
 		{key: "port", label: "SSH port", kind: fInt, value: "22"},
-		{key: "mode", label: "Deploy mode", kind: fEnum, opts: []string{"push", "muster"}, value: "push", help: "push = pipe hooks over SSH · muster = remote runs muster"},
-		{key: "transport", label: "Transport", kind: fEnum, opts: []string{"ssh", "cloud"}, value: "ssh"},
-		{key: "path", label: "Remote project dir", kind: fText, help: "optional"},
+		{key: "path", label: "Project folder", kind: fText, help: "on the server, optional"},
 		{key: "key", label: "SSH key file", kind: fText, help: "optional, e.g. ~/.ssh/id_ed25519"},
 	})
 	s.addErr = ""
@@ -89,19 +73,20 @@ func (s *serversScreen) items() []item {
 		out = append(out, item{machine: &inv.Machines[i]})
 	}
 	for i := range inv.Groups {
+		if len(inv.Groups[i].Machines) == 0 {
+			continue
+		}
 		out = append(out, item{group: &inv.Groups[i]})
 	}
 	return out
 }
 
-func (s *serversScreen) test(m fleet.Machine) tea.Cmd {
-	s.results[m.Name] = &testResult{running: true}
-	id, cmd := s.env.Tasks.Run("testing "+m.Name, s.Key(), false, func(ctx context.Context) tea.Msg {
-		lat, err := fleet.Test(ctx, m)
-		return sshTestMsg{m.Name, lat, err}
-	})
-	s.tasks[id] = m.Name
-	return cmd
+func (s *serversScreen) current() item {
+	items := s.items()
+	if s.sel >= 0 && s.sel < len(items) {
+		return items[s.sel]
+	}
+	return item{}
 }
 
 func (s *serversScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
@@ -115,21 +100,8 @@ func (s *serversScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 			}
 			s.want = ""
 		}
+		s.sel = clamp(s.sel, 0, max(len(s.items())-1, 0))
 	case TaskMsg:
-		if m.ID == s.healthID && s.healthID != 0 {
-			if in, ok := m.Msg.(fleetStatusMsg); ok {
-				s.healthErr = ""
-				if in.err != nil {
-					s.healthErr = in.err.Error()
-					return s, nil
-				}
-				for _, ms := range in.st {
-					s.health[ms.Machine] = ms
-					delete(s.results, ms.Machine) // the newer answer wins
-				}
-			}
-			return s, nil
-		}
 		if m.ID == s.addTask && s.addTask != 0 {
 			switch in := m.Msg.(type) {
 			case logEndMsg:
@@ -138,41 +110,13 @@ func (s *serversScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 					return s, nil
 				}
 				s.adding = nil
-				return s, tea.Batch(toast(lvlOK, "Machine added"), refresh("fleet"))
+				return s, tea.Batch(toast(lvlOK, "Server added"), refresh("fleet"))
 			case taskErrMsg:
 				s.addErr = in.Err.Error()
 			}
-			return s, nil
 		}
-		if _, ok := s.tasks[m.ID]; !ok {
-			return s, nil
-		}
-		if in, ok := m.Msg.(sshTestMsg); ok {
-			r := &testResult{ok: in.err == nil, latency: in.latency}
-			if in.err != nil {
-				r.err = in.err.Error()
-			}
-			s.results[in.name] = r
-		}
-	case TaskEndedMsg:
-		delete(s.tasks, m.ID)
 	}
 	return s, nil
-}
-
-// checkHealth runs `muster fleet status --json` for every machine and shows
-// the answers in the table.
-func (s *serversScreen) checkHealth() tea.Cmd {
-	eng := s.env.Eng()
-	if eng == nil || s.env.Tasks.Running(s.healthID) {
-		return nil
-	}
-	id, cmd := s.env.Tasks.Run("checking fleet health", s.Key(), false, func(ctx context.Context) tea.Msg {
-		st, err := fleet.Status(ctx, eng, "")
-		return fleetStatusMsg{st, err}
-	})
-	s.healthID = id
-	return cmd
 }
 
 func (s *serversScreen) submitAdd() tea.Cmd {
@@ -180,7 +124,7 @@ func (s *serversScreen) submitAdd() tea.Cmd {
 	name, target := strings.TrimSpace(f.get("name")), strings.TrimSpace(f.get("target"))
 	switch {
 	case name == "":
-		s.addErr = "Give the machine a name"
+		s.addErr = "Give the server a name"
 		return nil
 	case !strings.Contains(target, "@"):
 		s.addErr = "Use the form user@host"
@@ -188,7 +132,7 @@ func (s *serversScreen) submitAdd() tea.Cmd {
 	}
 	eng := s.env.Eng()
 	if eng == nil {
-		s.addErr = "The muster CLI is needed to add machines"
+		s.addErr = "The muster CLI is needed to add servers"
 		return nil
 	}
 	args := []string{"fleet", "add", name, target, "--port", firstNonEmpty(f.get("port"), "22"), "--mode", f.get("mode"), "--transport", f.get("transport")}
@@ -200,27 +144,67 @@ func (s *serversScreen) submitAdd() tea.Cmd {
 	}
 	s.addErr = ""
 	id, cmd := s.env.Tasks.Stream("adding "+name, s.Key(), true, func(ctx context.Context) (<-chan tea.Msg, error) {
-		lines, wait, err := rawLines(ctx, eng.Command(ctx, args...))
-		if err != nil {
-			return nil, err
-		}
-		out := make(chan tea.Msg, 4)
-		go func() {
-			defer close(out)
-			var all []string
-			for l := range lines {
-				all = append(all, l)
-			}
-			err := wait()
-			if err != nil && len(all) > 0 {
-				err = fmt.Errorf("%s", strings.TrimSpace(all[len(all)-1]))
-			}
-			out <- logEndMsg{err}
-		}()
-		return out, nil
+		return runQuiet(ctx, eng.Command(ctx, args...))
 	})
 	s.addTask = id
 	return cmd
+}
+
+// runQuiet runs a command and reports only how it ended (with its last
+// output line as the error).
+func runQuiet(ctx context.Context, c *exec.Cmd) (<-chan tea.Msg, error) {
+	lines, wait, err := rawLines(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan tea.Msg, 4)
+	go func() {
+		defer close(out)
+		var all []string
+		for l := range lines {
+			all = append(all, l)
+		}
+		err := wait()
+		if err != nil && len(all) > 0 {
+			err = fmt.Errorf("%s", strings.TrimSpace(all[len(all)-1]))
+		}
+		out <- logEndMsg{err}
+	}()
+	return out, nil
+}
+
+// serverAction runs one action on a server or group (shared by the list,
+// the detail screen and the palette).
+func serverAction(env *Env, action, target string) tea.Cmd {
+	mc, isMachine := env.State.Fleet.Find(target)
+	switch action {
+	case "open":
+		if isMachine {
+			return nav(newServerScreen(env, target))
+		}
+		return runLine("fleet status " + target)
+	case "deploy":
+		body := []string{"Runs muster fleet deploy " + target + "."}
+		if isMachine {
+			body = append(body, runsHow(mc)+" · "+connection(mc))
+		}
+		return func() tea.Msg {
+			return confirmMsg{title: "Deploy to " + target + "?", body: body, yes: "Deploy", onYes: runLine("fleet deploy " + target)}
+		}
+	case "rollback":
+		return func() tea.Msg {
+			return confirmMsg{title: "Roll back " + target + "?", body: []string{"Runs muster fleet rollback " + target + ": every service there goes back to its previous version."}, yes: "Roll back", onYes: runLine("fleet rollback " + target)}
+		}
+	case "status":
+		return runLine("fleet status " + target)
+	case "test":
+		return runLine("fleet test " + target)
+	case "shell":
+		return runLine("ssh " + target)
+	case "pair":
+		return runLine("pair " + target)
+	}
+	return nil
 }
 
 func (s *serversScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
@@ -242,10 +226,7 @@ func (s *serversScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 		return s, nil, true
 	}
 	items := s.items()
-	var cur item
-	if s.sel < len(items) {
-		cur = items[s.sel]
-	}
+	cur := s.current()
 	target := ""
 	if cur.machine != nil {
 		target = cur.machine.Name
@@ -257,64 +238,159 @@ func (s *serversScreen) HandleKey(k tea.KeyMsg) (Screen, tea.Cmd, bool) {
 		s.sel = clamp(s.sel+1, 0, len(items)-1)
 	case "k", "up":
 		s.sel = clamp(s.sel-1, 0, len(items)-1)
+	case "home", "g":
+		s.sel = 0
+	case "end", "G":
+		s.sel = max(len(items)-1, 0)
 	case "a":
 		s.startAdd(nil)
-	case "t":
-		if cur.machine != nil {
-			return s, s.test(*cur.machine), true
-		}
-		if cur.group != nil {
-			var cmds []tea.Cmd
-			for _, name := range cur.group.Machines {
-				if m, ok := s.env.State.Fleet.Find(name); ok {
-					cmds = append(cmds, s.test(m))
-				}
-			}
-			return s, tea.Batch(cmds...), true
-		}
-	case "T":
-		var cmds []tea.Cmd
-		for _, m := range s.env.State.Fleet.Machines {
-			cmds = append(cmds, s.test(m))
-		}
-		return s, tea.Batch(cmds...), true
-	case "enter", "s":
-		if cur.machine != nil {
-			return s, runLine("ssh " + cur.machine.Name), true
+	case "enter", "right", "l":
+		if target != "" {
+			return s, serverAction(s.env, "open", target), true
 		}
 	case "d":
 		if target != "" {
-			return s, runLine("fleet deploy " + target), true
+			return s, serverAction(s.env, "deploy", target), true
 		}
-	case "u":
-		return s, runLine(strings.TrimSpace("fleet status " + target)), true
-	case "U":
-		return s, s.checkHealth(), true
+	case "s":
+		if target != "" {
+			return s, serverAction(s.env, "status", target), true
+		}
+	case "t":
+		if target != "" {
+			return s, serverAction(s.env, "test", target), true
+		}
 	case "b":
 		if target != "" {
-			t := target
-			return s, func() tea.Msg {
-				return confirmMsg{title: "Roll back " + t + "?", body: []string{"Runs muster fleet rollback " + t + "."}, yes: "Roll back", onYes: runLine("fleet rollback " + t)}
-			}, true
+			return s, serverAction(s.env, "rollback", target), true
+		}
+	case "p":
+		if cur.machine != nil {
+			return s, serverAction(s.env, "pair", target), true
 		}
 	case "c":
 		if !s.env.State.Cloud.LoggedIn {
 			return s, runLine("cloud login"), true
 		}
 		return s, runLine("cloud status"), true
-	case "R":
-		return s, refresh("fleet"), true
+	case "r", "R":
+		return s, tea.Batch(refresh("fleet"), s.env.loadFleetHealth()), true
 	default:
 		return s, nil, false
 	}
 	return s, nil, true
 }
 
+func (s *serversScreen) Click(id string, double bool) (Screen, tea.Cmd, bool) {
+	if arg, ok := zoneArg(id, "srv:row:"); ok {
+		i, _ := strconv.Atoi(arg)
+		if i == s.sel || double {
+			s.sel = i
+			ns, cmd, _ := s.HandleKey(tea.KeyMsg{Type: tea.KeyEnter})
+			return ns, cmd, true
+		}
+		s.sel = i
+		return s, nil, true
+	}
+	if arg, ok := zoneArg(id, "srv:do:"); ok {
+		return s, runLine(arg), true
+	}
+	return s, nil, false
+}
+
+// serverColumns are the list's column widths for a pane w cells wide.
+type serverColumns struct{ name, status, conn, svc int }
+
+func serverCols(w int, names []string) serverColumns {
+	c := serverColumns{name: 6, status: 15, svc: 12}
+	for _, n := range names {
+		c.name = max(c.name, width(n))
+	}
+	c.name = min(c.name, clamp(w/4, 8, 22))
+	// 2 cursor + 2 gaps between each column
+	c.conn = w - 2 - c.name - c.status - c.svc - 6
+	if c.conn < 12 {
+		c.svc = 0
+		c.conn = w - 2 - c.name - c.status - 4
+	}
+	c.conn = clamp(c.conn, 6, 40)
+	return c
+}
+
+// listLines renders the server list (shared with the project dashboard).
+func (s *serversScreen) listLines(w int, compact bool) []string {
+	st := s.env.State
+	items := s.items()
+	var names []string
+	for _, it := range items {
+		if it.machine != nil {
+			names = append(names, it.machine.Name)
+		}
+	}
+	c := serverCols(w, names)
+	head := "  " + fit("Server", c.name) + "  " + fit("Status", c.status) + "  " + fit("Connection", c.conn)
+	if c.svc > 0 {
+		head += "  " + "Services"
+	}
+	lines := []string{theme.Dim.Render(head)}
+	groupHeader := false
+	for i, it := range items {
+		selected := i == s.sel && !compact
+		cur := "  "
+		if selected {
+			cur = theme.AccentFg.Render(theme.GlyphCursor) + " "
+		}
+		if it.machine != nil {
+			mc := *it.machine
+			ss := s.env.serverStatus(mc)
+			svc := ss.Services
+			if svc == "" {
+				svc = theme.Dim.Render("—")
+				if ss.Pairing {
+					svc = theme.Dim.Render("press p")
+				}
+			}
+			row := cur + fit(mc.Name, c.name) + "  " + fit(ss.Glyph+" "+ss.Word, c.status) + "  " + fit(theme.Dim.Render(connection(mc)), c.conn)
+			if c.svc > 0 {
+				row += "  " + fit(svc, c.svc)
+			}
+			lines = append(lines, s.env.mark("srv:row:"+strconv.Itoa(i), fit(row, w)))
+			continue
+		}
+		if compact {
+			continue
+		}
+		if !groupHeader {
+			lines = append(lines, "", theme.Dim.Render("  Groups"))
+			groupHeader = true
+		}
+		g := it.group
+		row := cur + fit(g.Name, c.name) + "  " + theme.Dim.Render(trunc(strings.Join(g.Machines, ", "), w-c.name-4))
+		lines = append(lines, s.env.mark("srv:row:"+strconv.Itoa(i), fit(row, w)))
+	}
+	if st.FleetHealthErr != nil {
+		lines = append(lines, "", theme.Err.Render(theme.GlyphFail+" ")+trunc("Couldn't check servers: "+st.FleetHealthErr.Error(), w-2))
+	}
+	return lines
+}
+
+func (s *serversScreen) statusLine() string {
+	st := s.env.State
+	now := s.env.Now()
+	switch {
+	case s.env.CheckingServers():
+		return theme.AccentFg.Render(s.env.Spin()) + theme.Dim.Render(" checking")
+	case !st.FleetHealthAt.IsZero():
+		return theme.Dim.Render("checked " + ago(st.FleetHealthAt, now))
+	}
+	return ""
+}
+
 func (s *serversScreen) View(w, h int) string {
 	st := s.env.State
 	if s.adding != nil {
-		lines := []string{section("Add a machine"), ""}
-		lines = append(lines, s.adding.Lines(w, 20, true)...)
+		lines := []string{section("Add a server"), ""}
+		lines = append(lines, s.adding.Lines(w, 16, true)...)
 		lines = append(lines, "")
 		if s.addErr != "" {
 			lines = append(lines, theme.Err.Render(theme.GlyphFail+" ")+trunc(s.addErr, w-2))
@@ -322,104 +398,60 @@ func (s *serversScreen) View(w, h int) string {
 		if s.env.Tasks.Running(s.addTask) {
 			lines = append(lines, theme.AccentFg.Render(s.env.Spin())+" Adding…")
 		}
-		lines = append(lines, keyHint("↑↓", "field", "Enter", "edit", "Ctrl+S", "add", "Esc", "cancel"))
 		return block(lines, w, h)
 	}
-	cloud := theme.Dim.Render("cloud: not signed in · c")
-	if st.Cloud.LoggedIn {
-		cloud = theme.OK.Render("● ") + theme.Dim.Render("cloud: "+firstNonEmpty(st.Cloud.Name, st.Cloud.Org))
-	}
-	lines := []string{spread(section("Servers"), cloud, w), ""}
+	lines := []string{spread(section("Servers"), s.statusLine(), w), ""}
 	items := s.items()
 	if len(items) == 0 {
 		if !st.FleetLoaded {
-			lines = append(lines, theme.AccentFg.Render(s.env.Spin())+theme.Dim.Render(" loading fleet…"))
-		} else {
-			lines = append(lines, "No machines yet.", "")
-			lines = append(lines, wrap("Press a to add one (name, user@host, SSH port), or type `fleet add prod-1 deploy@10.0.0.5`. muster deploys to them over SSH, or through Fleet Cloud when you're signed in.", w)...)
+			lines = append(lines, theme.AccentFg.Render(s.env.Spin())+theme.Dim.Render(" loading servers…"))
+			return block(lines, w, h)
 		}
-		for len(lines) < h-2 {
-			lines = append(lines, "")
+		lines = append(lines, "No servers yet.", "")
+		lines = append(lines, wrap("Add one and muster can deploy to it over SSH, or through Fleet Cloud when you're signed in.", w)...)
+		lines = append(lines, "", "  "+s.env.mark("srv:do:fleet add", button("Add a server", true))+"   "+theme.Dim.Render("a"))
+		if !st.Cloud.LoggedIn {
+			lines = append(lines, "  "+s.env.mark("srv:do:cloud login", button("Sign in to Fleet Cloud", false))+" "+theme.Dim.Render("c"))
 		}
-		lines = append(lines, rule(w), keyHint("a", "add machine", "c", "cloud login", "R", "refresh"))
 		return block(lines, w, h)
 	}
-	nameW := 12
-	lines = append(lines, theme.Dim.Render("  "+fit("MACHINE", nameW)+fit("VIA", 7)+fit("MODE", 8)+fit("TARGET", clamp(w-nameW-35, 10, 30))+" STATUS"))
-	groupHeader := false
-	for i, it := range items {
-		cur := "  "
-		if i == s.sel {
-			cur = theme.AccentFg.Render(theme.GlyphCursor) + " "
+	lines = append(lines, s.listLines(w, false)...)
+	if mc := s.current().machine; mc != nil {
+		if d := s.env.serverStatus(*mc).Detail; d != "" {
+			lines = append(lines, "", theme.Dim.Render(trunc(mc.Name+": "+d, w)))
 		}
-		if it.machine != nil {
-			m := it.machine
-			status := theme.Dim.Render("untested · t")
-			glyph := theme.Dim.Render(theme.GlyphUnknown)
-			if m.Paired != nil && !*m.Paired && m.Mode == "muster" {
-				status = theme.Warning.Render("not paired") + theme.Dim.Render(" · muster fleet pair "+m.Name)
-			}
-			if hs, ok := s.health[m.Name]; ok {
-				status, glyph = fleetHealthText(hs)
-			}
-			if s.env.Tasks.Running(s.healthID) {
-				status = theme.AccentFg.Render(s.env.Spin() + " checking")
-			}
-			if r := s.results[m.Name]; r != nil {
-				switch {
-				case r.running:
-					status, glyph = theme.AccentFg.Render(s.env.Spin()+" testing"), theme.AccentFg.Render(s.env.Spin())
-				case r.ok:
-					status, glyph = theme.OK.Render("reachable "+dur(r.latency)), theme.OK.Render(theme.GlyphHealthy)
-				default:
-					status, glyph = theme.Err.Render(trunc(r.err, 40)), theme.Err.Render(theme.GlyphUnhealthy)
-				}
-			}
-			lines = append(lines, trunc(cur+glyph+" "+fit(m.Name, nameW-2)+fit(m.Transport, 7)+fit(m.Mode, 8)+fit(m.Target(), clamp(w-nameW-35, 10, 30))+" "+status, w))
-			continue
-		}
-		if !groupHeader {
-			lines = append(lines, "", theme.Title.Render("Groups"))
-			groupHeader = true
-		}
-		g := it.group
-		lines = append(lines, trunc(cur+fit(g.Name, nameW)+theme.Dim.Render(strings.Join(g.Machines, ", ")), w))
 	}
-	if s.healthErr != "" {
-		lines = append(lines, "", theme.Err.Render(theme.GlyphFail+" ")+trunc("fleet status: "+s.healthErr, w-2))
+	if !st.Cloud.LoggedIn && hasCloudServer(st.Fleet) {
+		lines = append(lines, "", theme.Warning.Render(theme.GlyphWarn+" ")+"Not signed in to Fleet Cloud"+theme.Dim.Render(" — press c to sign in"))
 	}
-	for len(lines) < h-2 {
-		lines = append(lines, "")
-	}
-	lines = append(lines, rule(w), keyHint("t", "test", "U", "health", "Enter", "ssh", "d", "deploy", "u", "status", "b", "rollback", "a", "add"))
 	return block(lines, w, h)
 }
 
-// fleetHealthText renders one machine's `fleet status --json` answer.
-func fleetHealthText(hs fleet.MachineStatus) (string, string) {
-	if !hs.Reachable {
-		return theme.Err.Render(firstNonEmpty(hs.Error, "unreachable")), theme.Err.Render(theme.GlyphUnhealthy)
-	}
-	if hs.Healthy != nil && hs.Total != nil && *hs.Total > 0 {
-		txt := fmt.Sprintf("%d/%d healthy", *hs.Healthy, *hs.Total)
-		if *hs.Healthy < *hs.Total {
-			return theme.Warning.Render(txt), theme.Warning.Render(theme.GlyphWarn)
+func hasCloudServer(inv fleet.Inventory) bool {
+	for _, m := range inv.Machines {
+		if m.Transport == "cloud" {
+			return true
 		}
-		return theme.OK.Render(txt), theme.OK.Render(theme.GlyphHealthy)
 	}
-	if hs.Error != "" {
-		return theme.Warning.Render("reachable · " + hs.Error), theme.OK.Render(theme.GlyphHealthy)
-	}
-	return theme.OK.Render("reachable"), theme.OK.Render(theme.GlyphHealthy)
+	return false
 }
 
-func (s *serversScreen) Hint() string {
+func (s *serversScreen) Hint() string { return "" }
+
+func (s *serversScreen) Footer() []KeyHelp {
 	if s.adding != nil {
-		return keyHint("Enter", "edit field", "Ctrl+S", "add machine", "Esc", "cancel")
+		return []KeyHelp{{"enter", "edit"}, {"ctrl+s", "add server"}, {"esc", "cancel"}}
 	}
-	return ""
+	if len(s.items()) == 0 {
+		return []KeyHelp{{"a", "add server"}, {"c", "cloud login"}}
+	}
+	out := []KeyHelp{{"enter", "open"}, {"d", "deploy"}}
+	if mc := s.current().machine; mc != nil && s.env.serverStatus(*mc).Pairing {
+		out = append(out, KeyHelp{"p", "pair"})
+	}
+	return append(out, KeyHelp{"a", "add server"}, KeyHelp{"r", "refresh"})
 }
 
 func (s *serversScreen) Keys() []KeyHelp {
-	return []KeyHelp{{"j / k", "select"}, {"t / T", "test selected / all"}, {"U", "fleet health (muster fleet status)"}, {"Enter / s", "ssh (muster steps aside)"}, {"d", "fleet deploy"}, {"u", "fleet status"}, {"b", "fleet rollback"}, {"a", "add machine"}, {"c", "cloud login / status"}, {"R", "refresh"}}
+	return []KeyHelp{{"↑ ↓ / j k", "select"}, {"enter", "open the server"}, {"d", "deploy (asks first)"}, {"s", "status"}, {"t", "test the connection"}, {"b", "roll back (asks first)"}, {"p", "pair a server that runs muster"}, {"a", "add a server"}, {"c", "Fleet Cloud sign in / status"}, {"r", "check every server now"}}
 }

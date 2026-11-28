@@ -39,6 +39,9 @@ type Deps struct {
 	// CLIVersion presets `muster --version` (tests); otherwise it's asked
 	// for at startup.
 	CLIVersion string
+	// NoMouse: mouse reporting is off (--no-mouse, MUSTER_TUI_MOUSE=off or
+	// tui_mouse: off), so the terminal's own text selection works.
+	NoMouse bool
 }
 
 // Env is shared by the app and every screen. Screens may mutate State from
@@ -52,6 +55,8 @@ type Env struct {
 	MainW, MainH int
 	Fullscreen   bool
 	Active       string // key of the screen in the main pane
+	// Zones are the clickable regions of the current frame.
+	Zones *clickZones
 }
 
 // Spin returns the current spinner frame.
@@ -124,6 +129,11 @@ type State struct {
 	Fleet       fleet.Inventory
 	FleetLoaded bool
 	Cloud       fleet.Cloud
+	// FleetHealth is the last `muster fleet status --json` answer, by
+	// server name. It refreshes on its own while servers are shown.
+	FleetHealth    map[string]fleet.MachineStatus
+	FleetHealthAt  time.Time
+	FleetHealthErr error
 
 	Doctor      *engine.DoctorResult
 	HookChanges []config.HookChange
@@ -232,6 +242,10 @@ type (
 		inv fleet.Inventory
 		err error
 	}
+	fleetHealthMsg struct {
+		st  []fleet.MachineStatus
+		err error
+	}
 	doctorMsg struct {
 		r   engine.DoctorResult
 		err error
@@ -319,6 +333,17 @@ func (s *State) apply(msg tea.Msg, now time.Time) bool {
 			s.Fleet = m.inv
 		}
 		s.Cloud = fleet.CloudStatus()
+	case fleetHealthMsg:
+		s.FleetHealthErr = m.err
+		if m.err == nil {
+			if s.FleetHealth == nil {
+				s.FleetHealth = map[string]fleet.MachineStatus{}
+			}
+			for _, ms := range m.st {
+				s.FleetHealth[ms.Machine] = ms
+			}
+			s.FleetHealthAt = now
+		}
 	case doctorMsg:
 		if m.err == nil {
 			r := m.r
@@ -467,6 +492,26 @@ func (e *Env) loadFleet() tea.Cmd {
 	})
 	return cmd
 }
+
+// fleetHealthLabel is the background task that runs `fleet status --json`.
+const fleetHealthLabel = "checking servers"
+
+// loadFleetHealth asks the CLI how every server is doing (cloud servers go
+// through the relay, SSH servers over SSH; a few seconds).
+func (e *Env) loadFleetHealth() tea.Cmd {
+	eng := e.Eng()
+	if eng == nil || len(e.State.Fleet.Machines) == 0 || e.Tasks.Busy(fleetHealthLabel) {
+		return nil
+	}
+	_, cmd := e.Tasks.Run(fleetHealthLabel, "", false, func(ctx context.Context) tea.Msg {
+		st, err := fleet.Status(ctx, eng, "")
+		return fleetHealthMsg{st, err}
+	})
+	return cmd
+}
+
+// CheckingServers reports whether a fleet health check is running.
+func (e *Env) CheckingServers() bool { return e.Tasks.Busy(fleetHealthLabel) }
 
 // V07 reports whether the CLI has the muster 0.7 engine API.
 func (e *Env) V07() bool { return e.State.Caps.EngineAPI }

@@ -1,40 +1,40 @@
- muster  acme-store  main                                        checking…                                                  ⠹ deploying api
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Services                        │ Deploy · api                                                                                          0ms
- ◌ redis        tcp :6379        │  ⠹ api                                                                                                0ms
- ⠹ api          deploying        │    ✓ git pull origin/main                                                                             0ms
- ◌ web          http :3000       │    ⠹ run deploy.sh                                                                                    0ms
- ◌ worker       no check         │      │ #7 [build 3/6] COPY package*.json ./
-                                 │      │ #8 [build 4/6] RUN npm ci
- Servers                         │      │ #9 [build 5/6] RUN npm run build
- …                               │
-                                 │
- Docker                          │
- …                               │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-                                 │
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ⠹ api — deploy.sh · Ctrl+O full log · Esc cancel
- › ▏type a command — deploy, logs api, docker, help                                                                     / commands · ? help
+ muster  acme-store  ⎇ main  ›  Deploy                                                                                      ⠹ deploying api
+ Deploy · api                                                                                                                           0ms
+  ⠹ api                                                                                                                                 0ms
+    ✓ git pull origin/main                                                                                                              0ms
+    ⠹ run deploy.sh                                                                                                                     0ms
+      │ #7 [build 3/6] COPY package*.json ./
+      │ #8 [build 4/6] RUN npm ci
+      │ #9 [build 5/6] RUN npm run build
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ⠹ api — deploy.sh · Ctrl+O full log · Esc cancel                                                                   ? help  ctrl+k commands
